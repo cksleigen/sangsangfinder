@@ -1,5 +1,14 @@
 # pip install chromadb sentence-transformers feedparser requests beautifulsoup4 rank_bm25
 
+import os
+from pathlib import Path
+
+PROJECT_CACHE_DIR = Path(".cache")
+HF_CACHE_DIR = PROJECT_CACHE_DIR / "huggingface"
+os.environ.setdefault("HF_HOME", str(HF_CACHE_DIR))
+os.environ.setdefault("TRANSFORMERS_CACHE", str(HF_CACHE_DIR / "transformers"))
+os.environ.setdefault("HUGGINGFACE_HUB_CACHE", str(HF_CACHE_DIR / "hub"))
+
 import feedparser
 import requests
 from bs4 import BeautifulSoup
@@ -17,13 +26,30 @@ BOARD_LIST_URL = "https://www.hansung.ac.kr/bbs/hansung/2127/artclList.do"
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 TARGET_YEAR = "2026"
 
+PROJECT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+HF_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
 # ── 초기화 ────────────────────────────────────────────────────────────
-model = SentenceTransformer(MODEL_NAME)
-chroma_client = chromadb.PersistentClient(path="./chroma_db")
-collection = chroma_client.get_or_create_collection(
-    name="hansung_notices",
-    metadata={"hnsw:space": "cosine"}
-)
+model = None
+collection = None
+
+
+def get_model():
+    global model
+    if model is None:
+        model = SentenceTransformer(MODEL_NAME)
+    return model
+
+
+def get_collection():
+    global collection
+    if collection is None:
+        chroma_client = chromadb.PersistentClient(path="./chroma_db")
+        collection = chroma_client.get_or_create_collection(
+            name="hansung_notices",
+            metadata={"hnsw:space": "cosine"}
+        )
+    return collection
 
 
 # ── URL 정제 ──────────────────────────────────────────────────────────
@@ -118,6 +144,8 @@ def crawl_all_2026():
 
 # ── 임베딩 & 저장 ─────────────────────────────────────────────────────
 def index_notices(items: list):
+    current_collection = get_collection()
+    current_model = get_model()
     new_count = 0
     skip_count = 0
 
@@ -125,15 +153,15 @@ def index_notices(items: list):
         doc_id = hashlib.md5(item["url"].encode()).hexdigest()
 
         # 중복 체크
-        if collection.get(ids=[doc_id])["ids"]:
+        if current_collection.get(ids=[doc_id])["ids"]:
             skip_count += 1
             continue
 
         body = get_post_content(item["url"])
         text_to_embed = f"제목: {item['title']}\n\n{body}"
-        embedding = model.encode(text_to_embed).tolist()
+        embedding = current_model.encode(text_to_embed).tolist()
 
-        collection.add(
+        current_collection.add(
             ids=[doc_id],
             embeddings=[embedding],
             documents=[text_to_embed],
@@ -148,7 +176,7 @@ def index_notices(items: list):
         time.sleep(0.2)
 
     print(f"\n임베딩 완료 — 신규: {new_count}건 / 중복 스킵: {skip_count}건")
-    print(f"DB 총 보유: {collection.count()}건\n")
+    print(f"DB 총 보유: {current_collection.count()}건\n")
 
 
 # ── 하이브리드 검색 ───────────────────────────────────────────────────
@@ -162,8 +190,11 @@ def hybrid_search(query: str, top_k: int = 5, alpha: float = 0.7):
     alpha: 벡터 검색 가중치 (1-alpha = BM25 가중치)
     기본값 0.7 → 벡터 70%, BM25 30%
     """
+    current_collection = get_collection()
+    current_model = get_model()
+
     # 전체 문서 가져오기 (BM25용)
-    all_docs = collection.get(include=["documents", "metadatas"])
+    all_docs = current_collection.get(include=["documents", "metadatas"])
     documents = all_docs["documents"]
     metadatas = all_docs["metadatas"]
     ids = all_docs["ids"]
@@ -173,8 +204,8 @@ def hybrid_search(query: str, top_k: int = 5, alpha: float = 0.7):
         return
 
     # ── 벡터 검색 ──
-    query_embedding = model.encode(query).tolist()
-    vector_results = collection.query(
+    query_embedding = current_model.encode(query).tolist()
+    vector_results = current_collection.query(
         query_embeddings=[query_embedding],
         n_results=min(top_k * 2, len(documents)),  # 넉넉히 뽑아서 재랭킹
         include=["metadatas", "distances", "documents"]
