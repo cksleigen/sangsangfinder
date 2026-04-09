@@ -1,6 +1,43 @@
 # Sangsangfinder
 
-한성대학교 공지사항 RSS를 주기적으로 확인하고, 새 글이 올라오면 본문을 크롤링해서 Chroma DB에 적재하는 프로젝트입니다.
+한성대학교 공지사항 검색 및 추천 시스템 — RAG(Retrieval-Augmented Generation) 파이프라인 기반
+
+## 주요 기능
+
+- 한성대 공지사항 RSS 주기적 크롤링 및 ChromaDB 적재
+- Hybrid Search: BM25(0.3) + Dense Vector(0.7) 결합 검색
+- Teacher-Student-Judge 구조의 QA 데이터셋 자동 생성
+- Streamlit UI를 통한 공지사항 검색 인터페이스
+
+## 기술 스택
+
+| 구분 | 내용 |
+|------|------|
+| 임베딩 모델 | `jhgan/ko-sroberta-multitask` |
+| 검색 방식 | Hybrid (BM25 0.3 + Dense 0.7) |
+| Vector DB | ChromaDB (Pinecone 마이그레이션 예정) |
+| UI | Streamlit |
+| QA 생성 | Claude API (Opus / Haiku) |
+| 배포 | Streamlit Community Cloud (예정) |
+
+## 디렉토리 구조
+
+```
+sangsangfinder/
+├── app.py                      # Streamlit 검색 UI
+├── rss_monitor.py              # RSS 크롤링 및 ChromaDB 적재
+├── embedding_search_v1.py      # Hybrid search 구현
+├── requirements.txt
+├── state/
+│   └── seen_items.json         # 처리된 RSS 항목 상태
+├── chroma_db/                  # 임베딩 벡터 저장소
+└── qa_dataset_generation/
+    ├── run_qa_pipeline.py      # QA 데이터셋 생성 파이프라인
+    ├── train.py                # 파인튜닝 스크립트
+    ├── train_guide.ipynb       # 학습 가이드 노트북
+    └── data/
+        └── qa_dataset.jsonl    # 생성된 QA 데이터셋
+```
 
 ## 로컬 실행
 
@@ -10,35 +47,70 @@
 python3.11 -m venv .venv311
 ```
 
+> Python 3.12에서는 `torch==2.1.0` 호환 문제로 **Python 3.11 권장**
+
 ### 2. 의존성 설치
 
 ```bash
 .venv311/bin/pip install -r requirements.txt
 ```
 
-### 3. RSS 모니터 실행
+### 3. 환경 변수 설정
+
+프로젝트 루트에 `.env` 파일을 생성하고 필요한 API 키를 설정합니다.
+
+### 4. RSS 모니터 실행
 
 ```bash
 .venv311/bin/python -u rss_monitor.py
 ```
 
-첫 실행에서는 RSS 최근 50건을 기준 상태로만 저장하고 종료합니다.  
-이후 실행부터는 새 공지가 있을 때만 본문 크롤링과 임베딩 저장이 진행됩니다.
+- 첫 실행: RSS 최근 50건을 기준 상태로만 저장하고 종료
+- 이후 실행: 새 공지가 있을 때만 본문 크롤링 및 임베딩 저장
 
-## 상태 파일
+### 5. Streamlit UI 실행
 
-- [state/seen_items.json](/Users/mac/Projects/sangsangfinder/state/seen_items.json)
-  - 이미 처리한 RSS 항목 목록을 저장합니다.
-- [chroma_db](/Users/mac/Projects/sangsangfinder/chroma_db)
-  - 임베딩된 공지 데이터가 저장됩니다.
+```bash
+.venv311/bin/streamlit run app.py
+```
 
-## 주의사항
+## QA 데이터셋 생성
 
-- Python 3.12에서는 현재 `torch==2.1.0` 설치가 맞지 않아 로컬 실행 기준으로는 Python 3.11을 권장합니다.
-- 임베딩 모델 캐시는 프로젝트 내부 `.cache/` 아래에 저장됩니다.
-- 처음 실제 임베딩이 수행될 때는 모델 다운로드 때문에 시간이 조금 걸릴 수 있습니다.
+Teacher-Student-Judge 구조로 공지사항 기반 QA 쌍을 자동 생성합니다.
+
+```bash
+.venv311/bin/python qa_dataset_generation/run_qa_pipeline.py
+```
+
+| 역할 | 모델 |
+|------|------|
+| Teacher (문제 생성) | claude-opus-4-6 |
+| Student (답변 생성) | claude-haiku-4-5 |
+| Judge (품질 평가) | claude-haiku-4-5 |
+
+생성 결과는 `qa_dataset_generation/data/qa_dataset.jsonl`에 저장됩니다.
+
+## 파인튜닝
+
+```bash
+.venv311/bin/python qa_dataset_generation/train.py
+```
+
+자세한 내용은 [train_guide.ipynb](qa_dataset_generation/train_guide.ipynb) 참고
 
 ## GitHub Actions
 
-- 워크플로우 파일: [.github/workflows/rss-monitor.yml](/Users/mac/Projects/sangsangfinder/.github/workflows/rss-monitor.yml)
-- 10분마다 RSS를 확인하고, 상태 파일과 DB 변경분을 커밋합니다.
+- 워크플로우: [.github/workflows/rss-monitor.yml](.github/workflows/rss-monitor.yml)
+- 10분마다 RSS를 확인하고, 상태 파일과 DB 변경분을 자동 커밋
+
+## 상태 파일
+
+- `state/seen_items.json` — 이미 처리한 RSS 항목 목록
+- `chroma_db/` — 임베딩된 공지 벡터 데이터
+- `.cache/` — 임베딩 모델 캐시 (첫 실행 시 자동 다운로드)
+
+## 주의사항
+
+- `.env` 파일은 절대 커밋하지 않습니다 (API 키 포함)
+- 평가 시 train/test split을 반드시 명시합니다
+- 임베딩 모델 최초 다운로드 시 시간이 소요될 수 있습니다
