@@ -10,6 +10,19 @@ Hansung University notice search & recommendation system using RAG pipeline.
 
 ---
 
+## Claude Behavior (Token Efficiency)
+
+- 행동 전 먼저 생각하라. 코드 작성 전 기존 파일을 읽어라.
+- 출력은 간결하게, 추론은 철저하게.
+- 파일 전체 재작성보다 부분 편집(Edit)을 우선하라.
+- 이미 읽은 파일은 변경 가능성이 없으면 다시 읽지 마라.
+- 완료 선언 전 코드를 테스트하라.
+- 서두 인사말("물론이죠!", "좋은 질문입니다!") 및 마무리 멘트("도움이 됐으면 좋겠습니다") 금지.
+- 해결책은 단순하고 직접적으로. 불필요한 추상화 금지.
+- 사용자 지시는 이 파일보다 항상 우선한다.
+
+---
+
 ## Core Principles
 
 ### 1. Logical Consistency Check (논리적 정합성)
