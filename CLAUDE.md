@@ -56,6 +56,12 @@ pytest tests/ -v --tb=short
 
 ---
 
+## Security
+
+- **`.env` 파일은 절대 열람·출력·커밋하지 않는다.** API 키 등 민감 정보가 포함되어 있으므로, 어떤 이유로도 내용을 읽거나 로그에 출력하지 않는다.
+
+---
+
 ## Known Pitfalls
 - [ ] 과거 사례: test/val 분리 없이 전체 데이터로 Recall@K 계산 → 지표 신뢰 불가
       → 방지책: `test_eval_pipeline.py`에서 split 격리 assertion 필수
