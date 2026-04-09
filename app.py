@@ -1,4 +1,3 @@
-
 # ============================================================
 # app.py — 상상파인더 (온보딩 → 사이드바 + 챗봇/추천게시물)
 # ============================================================
@@ -20,6 +19,7 @@ CLASSIFY_MODEL_PATH = "/Users/dohyun/Desktop/캡스톤/0407/models/classify_fine
 BASE_MODEL_EMBED    = "jhgan/ko-sroberta-multitask"
 CHROMA_DB_PATH      = "/Users/dohyun/Desktop/캡스톤/0407/chroma_db"
 NOTICES_CACHE_PATH  = "/Users/dohyun/Desktop/캡스톤/0407/data/notices_cache.json"
+GEMINI_API_KEY      = os.getenv("GEMINI_API_KEY", "")  # 환경변수 또는 직접 입력
 
 BOARD_LIST_URL = "https://www.hansung.ac.kr/bbs/hansung/2127/artclList.do"
 HEADERS        = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
@@ -44,15 +44,29 @@ os.makedirs(CHROMA_DB_PATH, exist_ok=True)
 
 # 단과대 / 트랙·학과 매핑
 COLLEGE_MAP = {
-    "크리에이티브인문예술대학" : ["영미문화콘텐츠트랙", "영미언어정보트랙", "한국어교육트랙", "역사문화큐레이션트랙", "역사콘텐츠트랙", "지식정보문화트랙", "디지털인문정보학트랙","동양화전공", "서양화전공", "한국무용전공","현대무용전공","발레전공"],
-    "미래융합사회과학대학": ["국제무역트랙", "글로벌비지니스트랙", "기업ㆍ경제분석트랙", "경제금융투자트랙","공공행정트랙","법&정책트랙", "부동산트랙", "스마트도시ㆍ교통계획트랙","기업경영트랙","비지니스애널리틱스트랙","회계ㆍ재무경영트랙"],
-    "디자인대학" :["패션마케팅트랙", "패션디자인트랙","패션크리에이티브디렉션트랙","미디어디자인트랙","시각디자인트랙","영상ㆍ애니메이션디자인트랙","UX/UI디자인트랙","인테리어디자인트랙","VMDㆍ전시디자인트랙","게임그래픽디자인트랙","뷰티디자인매니지먼트학과"],
-    "IT공과대학": ["모바일소프트웨어트랙", "빅데이터트랙", "디지털콘텐츠ㆍ가상현실트랙", "웹공학트랙", "전자트랙","시스템반도체트랙","기계시스템디자인트랙","AI로봇융합트랙","산업공학트랙","응용산업데이터공학트랙"],
-    "창의융합대학": ["상상력인재학부", "문학문화콘텐츠학과", "AI응용학과","융합보안학과","미래모빌리티학과"],
-    "글로벌인재대학" : ["한국언어문화교육학과","글로벌K비지니스학과","영상엔터테인먼트학과","패션뷰티크리에이션학과","SW융합학과","글로벌벤처창업학과"],
-    "미래플러스대학" : ["융합행정학과", "호텔외식경영학과","뷰티디자인학과","비지니스컨설팅학과","ICT융합디자인학과","AIㆍ소프트웨어학과","뷰티매니지먼트학과","디지털콘텐츠디자인학과","인테리어디자인학과","스마트제조혁신컨설팅학과"]
+    "크리에이티브인문예술대학": ["영미문화콘텐츠트랙", "영미언어정보트랙", "한국어교육트랙", "역사문화큐레이션트랙", "역사콘텐츠트랙", "지식정보문화트랙", "디지털인문정보학트랙", "동양화전공", "서양화전공", "한국무용전공", "현대무용전공", "발레전공"],
+    "미래융합사회과학대학": ["국제무역트랙", "글로벌비지니스트랙", "기업ㆍ경제분석트랙", "경제금융투자트랙", "공공행정트랙", "법&정책트랙", "부동산트랙", "스마트도시ㆍ교통계획트랙", "기업경영트랙", "비지니스애널리틱스트랙", "회계ㆍ재무경영트랙"],
+    "디자인대학": ["패션마케팅트랙", "패션디자인트랙", "패션크리에이티브디렉션트랙", "미디어디자인트랙", "시각디자인트랙", "영상ㆍ애니메이션디자인트랙", "UX/UI디자인트랙", "인테리어디자인트랙", "VMDㆍ전시디자인트랙", "게임그래픽디자인트랙", "뷰티디자인매니지먼트학과"],
+    "IT공과대학": ["모바일소프트웨어트랙", "빅데이터트랙", "디지털콘텐츠ㆍ가상현실트랙", "웹공학트랙", "전자트랙", "시스템반도체트랙", "기계시스템디자인트랙", "AI로봇융합트랙", "산업공학트랙", "응용산업데이터공학트랙"],
+    "창의융합대학": ["상상력인재학부", "문학문화콘텐츠학과", "AI응용학과", "융합보안학과", "미래모빌리티학과"],
+    "글로벌인재대학": ["한국언어문화교육학과", "글로벌K비지니스학과", "영상엔터테인먼트학과", "패션뷰티크리에이션학과", "SW융합학과", "글로벌벤처창업학과"],
+    "미래플러스대학": ["융합행정학과", "호텔외식경영학과", "뷰티디자인학과", "비지니스컨설팅학과", "ICT융합디자인학과", "AIㆍ소프트웨어학과", "뷰티매니지먼트학과", "디지털콘텐츠디자인학과", "인테리어디자인학과", "스마트제조혁신컨설팅학과"],
 }
 
+
+
+# ============================================================
+# 로고 이미지 로드
+# ============================================================
+
+def get_logo_base64() -> str:
+    import base64
+    logo_path = "/Users/dohyun/Desktop/캡스톤/logo.png"
+    try:
+        with open(logo_path, "rb") as f:
+            return base64.b64encode(f.read()).decode()
+    except Exception:
+        return ""
 
 # ============================================================
 # 유틸
@@ -394,6 +408,65 @@ def summarize_notice(title: str, body: str) -> str:
 
 
 # ============================================================
+# Gemini LLM 답변 생성
+# ============================================================
+
+def get_gemini_model(api_key: str):
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=api_key)
+        return genai.GenerativeModel("gemini-2.5-flash")
+    except Exception as e:
+        st.error(f"[Gemini 모델 로드 오류] {e}")
+        return None
+
+
+def generate_llm_reply(user_query: str, results: list, profile: dict, is_first: bool = False) -> str:
+    """검색된 공지를 컨텍스트로 Gemini에게 자연어 답변 생성 요청"""
+    model = get_gemini_model(GEMINI_API_KEY) if GEMINI_API_KEY else None
+    if not model or not GEMINI_API_KEY:
+        if results:
+            return f"총 {len(results)}개의 관련 공지를 찾았습니다."
+        return "관련 공지를 찾지 못했습니다. 캐시를 먼저 불러와 주세요."
+
+    if not results:
+        return "관련 공지를 찾지 못했습니다. 다른 키워드로 검색해보세요."
+
+    # 공지 본문 포함한 컨텍스트 구성 (top 3개)
+    body_map = {n["url"]: n.get("body", "") for n in (st.session_state.notices or load_notices_cache())}
+    context_parts = []
+    for i, r in enumerate(results[:3], 1):
+        body = body_map.get(r["url"], "")[:800]
+        context_parts.append(
+            f"[공지 {i}]\n제목: {r['title']}\n날짜: {r['date']}\n내용: {body if body else '(본문 없음)'}"
+        )
+    context = "\n\n".join(context_parts)
+
+    name = profile.get('name', '')
+    greeting = f"{name}님, 안녕하세요. " if is_first else ""
+
+    prompt = f"""당신은 한성대학교 공지사항 안내 도우미입니다.
+
+아래 공지사항 본문을 바탕으로 사용자 질문에 직접적이고 구체적으로 답변하세요.
+- 날짜, 금액, 조건 등 구체적인 정보가 있으면 반드시 포함하세요.
+- "공지를 참고하세요" 같은 말은 절대 하지 마세요. 정보를 직접 알려주세요.
+- 2~3문장으로 간결하게 답변하세요.
+- 답변 시작: "{greeting}"{"(인사 없이 바로 답변)" if not is_first else ""}
+
+[공지 본문]
+{context}
+
+[질문]
+{user_query}"""
+
+    try:
+        response = model.generate_content(prompt)
+        return response.text.strip()
+    except Exception as e:
+        return f"[Gemini 오류] {e}"
+
+
+# ============================================================
 # 콘텐츠 기반 추천
 # ============================================================
 
@@ -436,6 +509,13 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"] {
     background-color: #f2f2f7 !important;
     font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display",
                  "Noto Sans KR", sans-serif !important;
+}
+/* 메인 컨텐츠 여백 축소 */
+.block-container {
+    padding-left: 2rem !important;
+    padding-right: 2rem !important;
+    max-width: 860px !important;
+    margin: 0 auto !important;
 }
 
 /* 사이드바 */
@@ -583,33 +663,69 @@ section[data-testid="stSidebar"] > div:first-child {
     background: #0a84ff;
     color: white;
     border-radius: 20px 20px 5px 20px;
-    padding: 12px 18px;
-    max-width: 72%;
+    padding: 10px 16px;
+    max-width: 55%;
+    width: fit-content;
     margin-left: auto;
     margin-bottom: 10px;
-    font-size: 15px;
-    line-height: 1.55;
+    font-size: 14px;
+    line-height: 1.5;
     word-break: break-word;
 }
 .chat-bubble-bot {
-    background: white;
+    background: #f0f4ff;
     color: #1d1d1f;
     border-radius: 20px 20px 20px 5px;
     padding: 12px 18px;
-    max-width: 80%;
+    max-width: 75%;
+    width: fit-content;
     margin-bottom: 10px;
-    font-size: 15px;
+    font-size: 14px;
     line-height: 1.55;
-    box-shadow: 0 1px 5px rgba(0,0,0,0.08);
+    border: 1px solid #dce8ff;
     word-break: break-word;
 }
-/* chat container - border=True 컨테이너 스타일 */
+/* 맥OS 창 버튼 */
+.mac-bar {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 10px 16px;
+    background: #e8eef5;
+    border-radius: 10px 10px 0 0;
+    margin: -14px -14px 0 -14px;
+    border-bottom: 1px solid rgba(0,0,0,0.07);
+}
+.mac-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+.mac-dot-red    { background: #ff5f57; box-shadow: 0 0 0 0.5px rgba(0,0,0,0.12); }
+.mac-dot-yellow { background: #febc2e; box-shadow: 0 0 0 0.5px rgba(0,0,0,0.12); }
+.mac-dot-green  { background: #28c840; box-shadow: 0 0 0 0.5px rgba(0,0,0,0.12); }
+
+/* mac-bar를 감싸는 Streamlit 요소 여백 제거 */
+[data-testid="stMarkdownContainer"]:has(.mac-bar) {
+    margin-bottom: -1rem !important;
+    line-height: 0 !important;
+}
+
+/* 채팅 컨테이너 */
 [data-testid="stVerticalBlockBorderWrapper"]:has(.chat-bubble-user),
-[data-testid="stVerticalBlockBorderWrapper"]:has(.chat-bubble-bot) {
+[data-testid="stVerticalBlockBorderWrapper"]:has(.chat-bubble-bot),
+[data-testid="stVerticalBlockBorderWrapper"]:has(.mac-bar) {
     background: #f9f9fb !important;
-    border-radius: 18px !important;
-    min-height: 340px !important;
-    border: 1px solid rgba(0,0,0,0.06) !important;
+    border-radius: 13px !important;
+    min-height: 0 !important;
+    border: 1px solid rgba(0,0,0,0.07) !important;
+    padding: 14px !important;
+}
+
+/* 빈 상태일 때도 동일하게 */
+[data-testid="stVerticalBlockBorderWrapper"]:has([data-testid="stMarkdownContainer"]) + div {
+    margin-top: 0 !important;
 }
 
 /* 공지 카드 */
@@ -701,59 +817,70 @@ hr { border: none; border-top: 1px solid rgba(0,0,0,0.08) !important; margin: 14
 def render_onboarding():
     st.markdown(GLOBAL_CSS, unsafe_allow_html=True)
 
-    # 전체 화면 중앙 정렬
-    _, center, _ = st.columns([1, 2.2, 1])
-    with center:
-        st.markdown("<div style='height:60px'></div>", unsafe_allow_html=True)
+    st.markdown("<div style='height:48px'></div>", unsafe_allow_html=True)
 
-        # 로고
-        st.markdown("""
-<div style="text-align:center; margin-bottom:32px;">
-  <div style="display:inline-flex; align-items:center; justify-content:center;
-       width:64px; height:64px; background:linear-gradient(135deg,#0a84ff,#34aadc);
-       border-radius:18px; font-size:30px; margin-bottom:14px; box-shadow:0 4px 16px rgba(10,132,255,0.35);">
-    🔍
+    # 왼쪽(로고/설명) + 오른쪽(폼) 2분할
+    col_logo, col_form = st.columns([1, 2], gap="large")
+
+    # ── 왼쪽: 로고 + 타이틀 ──────────────────────────────────
+    with col_logo:
+        st.markdown("<div style='height:60px'></div>", unsafe_allow_html=True)
+        logo_b64 = get_logo_base64()
+        logo_img = f'<img src="data:image/png;base64,{logo_b64}" style="width:90px; height:90px; object-fit:contain; display:block;">' \
+                   if logo_b64 else '<div style="font-size:56px;">🔍</div>'
+        st.markdown(f"""
+<div style="padding-left:8px;">
+  {logo_img}
+  <div style="font-size:28px; font-weight:700; color:#1d1d1f; letter-spacing:-0.03em; margin-top:16px;">상상파인더</div>
+  <div style="font-size:14px; color:#86868b; margin-top:6px; line-height:1.6;">
+    한성대 공지를<br>스마트하게 검색하세요.
   </div>
-  <div style="font-size:26px; font-weight:700; color:#1d1d1f; letter-spacing:-0.03em;">상상파인더</div>
-  <div style="font-size:14px; color:#86868b; margin-top:4px;">한성대 공지 스마트 검색</div>
 </div>
 """, unsafe_allow_html=True)
 
+    # ── 오른쪽: 입력 폼 ──────────────────────────────────────
+    with col_form:
         with st.container(border=True):
             st.markdown("""
-<div style="font-size:18px; font-weight:700; color:#1d1d1f; margin-bottom:4px;">반갑습니다 👋</div>
-<div style="font-size:14px; color:#86868b; margin-bottom:8px;">먼저 기본 정보를 알려주세요.</div>
+<div style="font-size:17px; font-weight:700; color:#1d1d1f; margin-bottom:3px;">반갑습니다 👋</div>
+<div style="font-size:13px; color:#86868b; margin-bottom:14px;">기본 정보를 알려주세요.</div>
 """, unsafe_allow_html=True)
 
-            name = st.text_input("이름", placeholder="홍길동", key="ob_name")
+            # 1행: 이름 + 단과대
+            r1c1, r1c2 = st.columns(2)
+            with r1c1:
+                name = st.text_input("이름", placeholder="홍길동", key="ob_name")
+            with r1c2:
+                college = st.selectbox("단과대", list(COLLEGE_MAP.keys()), key="ob_college")
 
-            college = st.selectbox(
-                "단과대",
-                list(COLLEGE_MAP.keys()),
-                key="ob_college"
-            )
+            # 2행: 트랙/학과 + 학년
+            r2c1, r2c2 = st.columns(2)
+            with r2c1:
+                track_options = COLLEGE_MAP.get(college, ["기타"])
+                track = st.selectbox("트랙 / 학과", track_options, key="ob_track")
+            with r2c2:
+                grade = st.selectbox("학년", ["1학년", "2학년", "3학년", "4학년"], key="ob_grade")
 
-            track_options = COLLEGE_MAP.get(college, ["기타"])
-            track = st.selectbox("트랙 / 학과", track_options, key="ob_track")
+            # 3행: 관심사 + 비교과
+            r3c1, r3c2 = st.columns(2)
+            with r3c1:
+                interests = st.multiselect(
+                    "관심사",
+                    CATEGORIES + ["교환학생"],
+                    placeholder="카테고리 선택",
+                    key="ob_interests"
+                )
+            with r3c2:
+                extracurricular = st.radio(
+                    "비교과 점수",
+                    ["채웠어요", "아직이요"],
+                    horizontal=False,
+                    key="ob_extra"
+                )
 
-            grade = st.selectbox("학년", ["1학년", "2학년", "3학년", "4학년"], key="ob_grade")
+            st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
 
-            interests = st.multiselect(
-                "관심사 (복수 선택 가능)",
-                CATEGORIES + ["교환학생"],
-                placeholder="관심 카테고리를 선택하세요",
-                key="ob_interests"
-            )
-
-            extracurricular = st.radio(
-                "비교과 점수를 채웠나요?",
-                ["예, 채웠어요", "아직 안 채웠어요"],
-                horizontal=True,
-                key="ob_extra"
-            )
-
-            st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-
+            # 4행: 버튼
             if st.button("시작하기 →", use_container_width=True):
                 if not name.strip():
                     st.markdown('<div style="background:#e8f1ff;color:#0a84ff;border-radius:10px;padding:10px 16px;font-size:14px;font-weight:500;border:1px solid #b3d1ff;">✏️ 이름을 입력해 주세요.</div>', unsafe_allow_html=True)
@@ -764,7 +891,7 @@ def render_onboarding():
                         "track": track,
                         "grade": grade,
                         "interests": interests,
-                        "extracurricular": extracurricular == "예, 채웠어요",
+                        "extracurricular": extracurricular == "채웠어요",
                     }
                     st.session_state.onboarded = True
                     st.rerun()
@@ -777,11 +904,11 @@ def render_onboarding():
 def render_sidebar(profile: dict):
     with st.sidebar:
         # 로고
-        st.markdown("""
+        logo_b64 = get_logo_base64()
+        logo_img = f'<img src="data:image/png;base64,{logo_b64}" style="width:32px; height:32px; object-fit:contain; flex-shrink:0;">' if logo_b64 else '<div style="width:32px; height:32px; font-size:18px; display:flex; align-items:center; justify-content:center;">🔍</div>'
+        st.markdown(f"""
 <div style="display:flex; align-items:center; gap:10px; padding-bottom:18px;">
-  <div style="width:38px; height:38px; background:linear-gradient(135deg,#0a84ff,#34aadc);
-       border-radius:11px; display:flex; align-items:center; justify-content:center;
-       font-size:20px; flex-shrink:0; box-shadow:0 2px 8px rgba(10,132,255,0.4);">🔍</div>
+  {logo_img}
   <div>
     <div style="font-size:16px; font-weight:700; color:#1d1d1f; letter-spacing:-0.02em;">상상파인더</div>
     <div style="font-size:11px; color:#86868b; margin-top:1px;">Hansung Notice Finder</div>
@@ -814,9 +941,9 @@ def render_sidebar(profile: dict):
         st.markdown('<div class="sb-label">바로가기</div>', unsafe_allow_html=True)
         links = [
             ("🏫", "한성대학교", "https://www.hansung.ac.kr/hansung/index.do"),
-            ("💻", "한성 e-class", "https://learn.hansung.ac.kr/"),
+            ("💻", "e-Class", "https://learn.hansung.ac.kr/"),
             ("📋", "종합정보시스템", "https://info.hansung.ac.kr/"),
-            ("📊", "스마트자기관리시스템", "https://hsportal.hansung.ac.kr/"),
+            ("📊", "스마트자기관리", "https://hsportal.hansung.ac.kr/"),
             ("📚", "학술정보관", "https://hsel.hansung.ac.kr/"),
         ]
         link_html = ""
@@ -840,6 +967,8 @@ def render_sidebar(profile: dict):
 
 
 
+
+
 # ============================================================
 # 메인 화면 — 챗봇
 # ============================================================
@@ -848,18 +977,27 @@ def render_chatbot(profile: dict):
     top_k = 5
     alpha = 0.7
 
-    # 채팅 영역 — st.container로 감싸서 CSS 적용
+    # 채팅 영역 — mac 버튼 바 + 컨테이너를 하나로
     with st.container(border=True):
+        # 맥OS 창 버튼 바 (컨테이너 안 최상단)
+        st.markdown("""
+<div class="mac-bar">
+  <div class="mac-dot mac-dot-red"></div>
+  <div class="mac-dot mac-dot-yellow"></div>
+  <div class="mac-dot mac-dot-green"></div>
+</div>
+<div style="margin-top:12px;"></div>
+""", unsafe_allow_html=True)
         if not st.session_state.chat_history:
             name = profile.get("name", "")
             st.markdown(f"""
-<div style="text-align:center; padding:48px 0 36px; color:#86868b;">
+<div style="text-align:center; padding:24px 0 20px; color:#86868b;">
   <div style="font-size:38px; margin-bottom:14px;">🔍</div>
   <div style="font-size:17px; font-weight:600; color:#1d1d1f; margin-bottom:6px;">
     안녕하세요, {name}님!
   </div>
   <div style="font-size:13px; line-height:1.6;">
-    우리 대학의 공지를 검색해보세요.<br/>
+    한성대 공지를 자연어로 검색해보세요.<br/>
     <span style="color:#aeaeb2;">"장학금 신청 기간 알려줘" &nbsp;·&nbsp; "취업박람회 언제야?" &nbsp;·&nbsp; "비교과 프로그램 추천해줘"</span>
   </div>
 </div>
@@ -875,18 +1013,14 @@ def render_chatbot(profile: dict):
                         f'<div class="chat-bubble-bot">{msg["content"]}</div>',
                         unsafe_allow_html=True)
                     if msg.get("results"):
-                        for r in msg["results"]:
-                            body_map = {n["url"]: n.get("body", "")
-                                        for n in (st.session_state.notices or load_notices_cache())}
-                            body    = body_map.get(r["url"], "")
-                            summary = summarize_notice(r["title"], body) if body else ""
-                            st.markdown(f"""
+                        r = msg["results"][0]
+                        st.markdown(f"""
 <div class="notice-card">
-  <span class="notice-tag">{r.get('category','기타')}</span>
+  <span style="font-size:11px;color:#86868b;font-weight:500;">📎 참고 공지</span>
+  &nbsp;<span class="notice-tag">{r.get('category','기타')}</span>
   <span class="notice-date">{r['date']}</span>
   <div class="notice-title">{r['title']}</div>
-  {"<div class='notice-summary'>" + summary + "</div>" if summary else ""}
-  <div style="margin-top:10px;">
+  <div style="margin-top:8px;">
     <a href="{r['url']}" target="_blank"
        style="font-size:12px;color:#0a84ff;text-decoration:none;font-weight:600;">
       공지 바로가기 →
@@ -915,8 +1049,9 @@ def render_chatbot(profile: dict):
             user_input, top_k=top_k, alpha=alpha,
             category_filter=cat_filter if cat_filter != "전체" else None,
         )
-        reply = f"{len(results)}개의 관련 공지를 찾았습니다." if results \
-            else "관련 공지를 찾지 못했습니다. 캐시를 먼저 불러와 주세요."
+        with st.spinner("답변 생성 중..."):
+            is_first = len(st.session_state.chat_history) == 1  # user 메시지 추가된 직후
+            reply = generate_llm_reply(user_input, results, st.session_state.profile, is_first=is_first)
         st.session_state.chat_history.append(
             {"role": "bot", "content": reply, "results": results})
         st.rerun()
