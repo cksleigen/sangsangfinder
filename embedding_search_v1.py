@@ -1,4 +1,4 @@
-# pip install chromadb sentence-transformers feedparser requests beautifulsoup4 rank_bm25
+# pip install chromadb sentence-transformers requests beautifulsoup4 rank_bm25
 
 import os
 from pathlib import Path
@@ -9,7 +9,6 @@ os.environ.setdefault("HF_HOME", str(HF_CACHE_DIR))
 os.environ.setdefault("TRANSFORMERS_CACHE", str(HF_CACHE_DIR / "transformers"))
 os.environ.setdefault("HUGGINGFACE_HUB_CACHE", str(HF_CACHE_DIR / "hub"))
 
-import feedparser
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse, urlencode, parse_qs, urlunparse
