@@ -19,7 +19,8 @@ CLASSIFY_MODEL_PATH = "/Users/dohyun/Desktop/캡스톤/0407/models/classify_fine
 BASE_MODEL_EMBED    = "jhgan/ko-sroberta-multitask"
 CHROMA_DB_PATH      = "/Users/dohyun/Desktop/캡스톤/0407/chroma_db"
 NOTICES_CACHE_PATH  = "/Users/dohyun/Desktop/캡스톤/0407/data/notices_cache.json"
-GEMINI_API_KEY      = os.getenv("GEMINI_API_KEY", "")  # 환경변수 또는 직접 입력
+PROFILE_CACHE_PATH  = "/Users/dohyun/Desktop/캡스톤/0407/data/profile_cache.json"
+GEMINI_API_KEY      = os.getenv("GEMINI_API_KEY", "AIzaSyDTN4vkhPWNmySsVfeKAejeF_p2i65L7JI")  # 환경변수 또는 직접 입력
 
 BOARD_LIST_URL = "https://www.hansung.ac.kr/bbs/hansung/2127/artclList.do"
 HEADERS        = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
@@ -64,6 +65,16 @@ def get_logo_base64() -> str:
     logo_path = "/Users/dohyun/Desktop/캡스톤/logo.png"
     try:
         with open(logo_path, "rb") as f:
+            return base64.b64encode(f.read()).decode()
+    except Exception:
+        return ""
+
+
+def get_hsu_base64() -> str:
+    import base64
+    hsu_path = "/Users/dohyun/Desktop/캡스톤/hsu.png"
+    try:
+        with open(hsu_path, "rb") as f:
             return base64.b64encode(f.read()).decode()
     except Exception:
         return ""
@@ -535,7 +546,7 @@ section[data-testid="stSidebar"] {
 }
 section[data-testid="stSidebar"] > div:first-child {
     width: 260px !important;
-    padding: 24px 16px !important;
+    padding: 8px 16px 16px 16px !important;
 }
 [data-testid="stSidebar"] * {
     font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text",
@@ -547,10 +558,10 @@ section[data-testid="stSidebar"] > div:first-child {
     background: #0a84ff !important;
     color: white !important;
     border: none !important;
-    border-radius: 10px !important;
-    font-size: 15px !important;
-    font-weight: 600 !important;
-    padding: 10px 20px !important;
+    border-radius: 8px !important;
+    font-size: 13px !important;
+    font-weight: 500 !important;
+    padding: 7px 14px !important;
     transition: all 0.15s ease !important;
     letter-spacing: -0.01em !important;
 }
@@ -801,6 +812,18 @@ section[data-testid="stSidebar"] > div:first-child {
     border: none !important;
 }
 
+/* 사이드바 스크롤 고정 */
+section[data-testid="stSidebar"] > div:first-child {
+    overflow: hidden !important;
+    overflow-y: hidden !important;
+}
+
+/* 사이드바 최상단 강제 여백 제거 */
+[data-testid="stSidebar"] > div:first-child > div:first-child {
+    padding-top: 0 !important;
+    margin-top: -3rem !important;
+}
+
 /* 구분선 */
 hr { border: none; border-top: 1px solid rgba(0,0,0,0.08) !important; margin: 14px 0 !important; }
 
@@ -826,7 +849,7 @@ def render_onboarding():
     with col_logo:
         st.markdown("<div style='height:60px'></div>", unsafe_allow_html=True)
         logo_b64 = get_logo_base64()
-        logo_img = f'<img src="data:image/png;base64,{logo_b64}" style="width:90px; height:90px; object-fit:contain; display:block;">' \
+        logo_img = f'<img src="data:image/png;base64,{logo_b64}" style="width:90px; height:auto; object-fit:contain; display:block;">' \
                    if logo_b64 else '<div style="font-size:56px;">🔍</div>'
         st.markdown(f"""
 <div style="padding-left:8px;">
@@ -861,22 +884,13 @@ def render_onboarding():
             with r2c2:
                 grade = st.selectbox("학년", ["1학년", "2학년", "3학년", "4학년"], key="ob_grade")
 
-            # 3행: 관심사 + 비교과
-            r3c1, r3c2 = st.columns(2)
-            with r3c1:
-                interests = st.multiselect(
-                    "관심사",
-                    CATEGORIES + ["교환학생"],
-                    placeholder="카테고리 선택",
-                    key="ob_interests"
-                )
-            with r3c2:
-                extracurricular = st.radio(
-                    "비교과 점수",
-                    ["채웠어요", "아직이요"],
-                    horizontal=False,
-                    key="ob_extra"
-                )
+            # 3행: 관심사 (한 줄 전체)
+            interests = st.multiselect(
+                "관심사",
+                CATEGORIES + ["교환학생"],
+                placeholder="관심 카테고리를 선택하세요",
+                key="ob_interests"
+            )
 
             st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
 
@@ -885,15 +899,17 @@ def render_onboarding():
                 if not name.strip():
                     st.markdown('<div style="background:#e8f1ff;color:#0a84ff;border-radius:10px;padding:10px 16px;font-size:14px;font-weight:500;border:1px solid #b3d1ff;">✏️ 이름을 입력해 주세요.</div>', unsafe_allow_html=True)
                 else:
-                    st.session_state.profile = {
+                    profile_data = {
                         "name": name.strip(),
                         "college": college,
                         "track": track,
                         "grade": grade,
                         "interests": interests,
-                        "extracurricular": extracurricular == "채웠어요",
                     }
+                    st.session_state.profile   = profile_data
                     st.session_state.onboarded = True
+                    with open(PROFILE_CACHE_PATH, "w", encoding="utf-8") as f:
+                        json.dump(profile_data, f, ensure_ascii=False, indent=2)
                     st.rerun()
 
 
@@ -907,11 +923,11 @@ def render_sidebar(profile: dict):
         logo_b64 = get_logo_base64()
         logo_img = f'<img src="data:image/png;base64,{logo_b64}" style="width:32px; height:32px; object-fit:contain; flex-shrink:0;">' if logo_b64 else '<div style="width:32px; height:32px; font-size:18px; display:flex; align-items:center; justify-content:center;">🔍</div>'
         st.markdown(f"""
-<div style="display:flex; align-items:center; gap:10px; padding-bottom:18px;">
+<div style="display:flex; align-items:center; gap:10px; padding-bottom:10px;">
   {logo_img}
   <div>
-    <div style="font-size:16px; font-weight:700; color:#1d1d1f; letter-spacing:-0.02em;">상상파인더</div>
-    <div style="font-size:11px; color:#86868b; margin-top:1px;">Hansung Notice Finder</div>
+    <div style="font-size:14px; font-weight:700; color:#1d1d1f; letter-spacing:-0.02em;">상상파인더</div>
+    <div style="font-size:10px; color:#86868b; margin-top:1px;">Hansung Notice Finder</div>
   </div>
 </div>
 <hr/>
@@ -922,8 +938,8 @@ def render_sidebar(profile: dict):
 
         rows = [
             ("이름", profile.get("name", "")),
-            ("단과대", profile.get("college", "")),
-            ("학과", profile.get("track", "")),
+            ("단과대학", profile.get("college", "")),
+            ("트랙/학과", profile.get("track", "")),
             ("학년", profile.get("grade", "")),
         ]
         html = ""
@@ -939,13 +955,94 @@ def render_sidebar(profile: dict):
 
         # 바로가기
         st.markdown('<div class="sb-label">바로가기</div>', unsafe_allow_html=True)
+
+        # 트랙/학과별 홈페이지 URL 매핑
+        DEPT_URLS = {
+            # 글로벌인재대학
+            "한국언어문화교육학과":      "https://www.hansung.ac.kr/global/1511/subview.do",
+            "글로벌K비지니스학과":       "https://www.hansung.ac.kr/global/1516/subview.do",
+            "영상엔터테인먼트학과":      "https://www.hansung.ac.kr/global/1521/subview.do",
+            "패션뷰티크리에이션학과":     "https://www.hansung.ac.kr/global/1526/subview.do",
+            "SW융합학과":             "https://www.hansung.ac.kr/global/1531/subview.do",
+            "글로벌벤처창업학과":        "https://www.hansung.ac.kr/global/6807/subview.do",
+            # 미래플러스대학
+            "융합행정학과":            "https://www.hansung.ac.kr/futureplus/731/subview.do",
+            "호텔외식경영학과":          "https://www.hansung.ac.kr/futureplus/734/subview.do",
+            "뷰티디자인학과":           "https://www.hansung.ac.kr/futureplus/737/subview.do",
+            "비지니스컨설팅학과":        "https://www.hansung.ac.kr/futureplus/740/subview.do",
+            "ICT융합디자인학과":        "https://www.hansung.ac.kr/futureplus/743/subview.do",
+            "AIㆍ소프트웨어학과":       "https://www.hansung.ac.kr/futureplus/746/subview.do",
+            "뷰티매니지먼트학과":        "https://www.hansung.ac.kr/futureplus/749/subview.do",
+            "디지털콘텐츠디자인학과":     "https://www.hansung.ac.kr/futureplus/754/subview.do",
+            "인테리어디자인학과":        "https://www.hansung.ac.kr/futureplus/759/subview.do",
+            "스마트제조혁신컨설팅학과":   "https://www.hansung.ac.kr/futureplus/764/subview.do",
+            # 창의융합대학
+            "상상력인재학부":    "https://www.hansung.ac.kr/CreCon/2761/subview.do",
+            "문학문화콘텐츠학과": "https://www.hansung.ac.kr/CreCon/2768/subview.do",
+            "AI응용학과":       "https://www.hansung.ac.kr/CreCon/2777/subview.do",
+            "융합보안학과":      "https://www.hansung.ac.kr/CreCon/2787/subview.do",
+            "미래모빌리티학과":   "https://www.hansung.ac.kr/CreCon/2796/subview.do",
+            # 미래융합사회과학대학
+            "국제무역트랙":              "https://www.hansung.ac.kr/SclScn/5260/subview.do",
+            "글로벌비지니스트랙":         "https://www.hansung.ac.kr/SclScn/5267/subview.do",
+            "기업ㆍ경제분석트랙":         "https://www.hansung.ac.kr/SclScn/5274/subview.do",
+            "경제금융투자트랙":           "https://www.hansung.ac.kr/SclScn/5281/subview.do",
+            "공공행정트랙":              "https://www.hansung.ac.kr/SclScn/5295/subview.do",
+            "법&정책트랙":              "https://www.hansung.ac.kr/SclScn/5303/subview.do",
+            "부동산트랙":               "https://www.hansung.ac.kr/SclScn/5313/subview.do",
+            "스마트도시ㆍ교통계획트랙":    "https://www.hansung.ac.kr/SclScn/5321/subview.do",
+            "기업경영트랙":              "https://www.hansung.ac.kr/SclScn/5328/subview.do",
+            "비지니스애널리틱스트랙":      "https://www.hansung.ac.kr/SclScn/5336/subview.do",
+            "회계ㆍ재무경영트랙":         "https://www.hansung.ac.kr/SclScn/5344/subview.do",
+            # IT공과대학
+            "모바일소프트웨어트랙":        "https://www.hansung.ac.kr/Engineering/4887/subview.do",
+            "빅데이터트랙":              "https://www.hansung.ac.kr/Engineering/4894/subview.do",
+            "디지털콘텐츠ㆍ가상현실트랙":   "https://www.hansung.ac.kr/Engineering/4901/subview.do",
+            "웹공학트랙":               "https://www.hansung.ac.kr/Engineering/4908/subview.do",
+            "전자트랙":                 "https://www.hansung.ac.kr/Engineering/4915/subview.do",
+            "시스템반도체트랙":           "https://www.hansung.ac.kr/Engineering/4922/subview.do",
+            "기계시스템디자인트랙":        "https://www.hansung.ac.kr/Engineering/4929/subview.do",
+            "AI로봇융합트랙":            "https://www.hansung.ac.kr/Engineering/4936/subview.do",
+            "산업공학트랙":              "https://www.hansung.ac.kr/Engineering/4992/subview.do",
+            "응용산업데이터공학트랙":       "https://www.hansung.ac.kr/Engineering/5020/subview.do",
+            # 디자인대학
+            "패션마케팅트랙":              "https://www.hansung.ac.kr/Design/5103/subview.do",
+            "패션디자인트랙":              "https://www.hansung.ac.kr/Design/5110/subview.do",
+            "패션크리에이티브디렉션트랙":    "https://www.hansung.ac.kr/Design/5117/subview.do",
+            "미디어디자인트랙":            "https://www.hansung.ac.kr/Design/5124/subview.do",
+            "시각디자인트랙":              "https://www.hansung.ac.kr/Design/5145/subview.do",
+            "영상ㆍ애니메이션디자인트랙":    "https://www.hansung.ac.kr/Design/5131/subview.do",
+            "UX/UI디자인트랙":            "https://www.hansung.ac.kr/Design/5173/subview.do",
+            "인테리어디자인트랙":           "https://www.hansung.ac.kr/Design/5159/subview.do",
+            "VMDㆍ전시디자인트랙":         "https://www.hansung.ac.kr/Design/5152/subview.do",
+            "게임그래픽디자인트랙":         "https://www.hansung.ac.kr/Design/5166/subview.do",
+            "뷰티디자인매니지먼트학과":      "https://www.hansung.ac.kr/Design/5180/subview.do",
+            "영미문화콘텐츠트랙":         "https://www.hansung.ac.kr/HmnArt/5641/subview.do",
+            "영미언어정보트랙":           "https://www.hansung.ac.kr/HmnArt/5577/subview.do",
+            "한국어교육트랙":            "https://www.hansung.ac.kr/HmnArt/5584/subview.do",
+            "역사문화큐레이션트랙":        "https://www.hansung.ac.kr/HmnArt/5627/subview.do",
+            "역사콘텐츠트랙":            "https://www.hansung.ac.kr/HmnArt/5634/subview.do",
+            "지식정보문화트랙":           "https://www.hansung.ac.kr/HmnArt/5613/subview.do",
+            "디지털인문정보학트랙":        "https://www.hansung.ac.kr/HmnArt/5620/subview.do",
+            "동양화전공":               "https://www.hansung.ac.kr/HmnArt/5648/subview.do",
+            "서양화전공":               "https://www.hansung.ac.kr/HmnArt/5655/subview.do",
+            "한국무용전공":              "https://www.hansung.ac.kr/HmnArt/5662/subview.do",
+            "현대무용전공":              "https://www.hansung.ac.kr/HmnArt/5669/subview.do",
+            "발레전공":                "https://www.hansung.ac.kr/HmnArt/5676/subview.do",
+        }
+
         links = [
             ("🏫", "한성대학교", "https://www.hansung.ac.kr/hansung/index.do"),
-            ("💻", "e-Class", "https://learn.hansung.ac.kr/"),
+            ("💻", "한성 e-class", "https://learn.hansung.ac.kr/"),
             ("📋", "종합정보시스템", "https://info.hansung.ac.kr/"),
-            ("📊", "스마트자기관리", "https://hsportal.hansung.ac.kr/"),
+            ("📊", "스마트자기관리시스템", "https://hsportal.hansung.ac.kr/"),
             ("📚", "학술정보관", "https://hsel.hansung.ac.kr/"),
         ]
+
+        # 사용자 트랙/학과 홈페이지 추가
+        track = profile.get("track", "")
+        if track in DEPT_URLS:
+            links.append(("🎓", f"{track}", DEPT_URLS[track]))
         link_html = ""
         for icon, label, url in links:
             link_html += f"""
@@ -963,6 +1060,39 @@ def render_sidebar(profile: dict):
   <span style="margin-left:auto; font-size:11px; color:#aeaeb2;">↗</span>
 </a>"""
         st.markdown(link_html, unsafe_allow_html=True)
+
+        st.markdown("<hr/>", unsafe_allow_html=True)
+        st.markdown("""
+<style>
+section[data-testid="stSidebar"] button[kind="secondary"],
+section[data-testid="stSidebar"] .stButton button {
+    font-size: 11px !important;
+    padding: 4px 8px !important;
+    height: 28px !important;
+    min-height: 0 !important;
+    line-height: 1 !important;
+    border-radius: 6px !important;
+}
+/* 정보 다시 입력 버튼 중앙 정렬 */
+section[data-testid="stSidebar"] .reset-btn {
+    display: flex;
+    justify-content: center;
+}
+section[data-testid="stSidebar"] .reset-btn button {
+    width: auto !important;
+}
+</style>
+<div class="reset-btn">
+""", unsafe_allow_html=True)
+        _, btn_col, _ = st.columns([0.3, 2.4, 0.3])
+        with btn_col:
+            if st.button("내 정보 다시 입력", use_container_width=True):
+                st.session_state.onboarded = False
+                st.session_state.profile = {}
+                st.session_state.chat_history = []
+                if os.path.exists(PROFILE_CACHE_PATH):
+                    os.remove(PROFILE_CACHE_PATH)
+                st.rerun()
 
 
 
@@ -990,9 +1120,11 @@ def render_chatbot(profile: dict):
 """, unsafe_allow_html=True)
         if not st.session_state.chat_history:
             name = profile.get("name", "")
+            hsu_b64 = get_hsu_base64()
+            hsu_img = f'<img src="data:image/png;base64,{hsu_b64}" style="width:60px; height:60px; object-fit:contain; display:block; margin:0 auto 14px auto;">' if hsu_b64 else '<div style="font-size:38px; margin-bottom:14px;">🔍</div>'
             st.markdown(f"""
 <div style="text-align:center; padding:24px 0 20px; color:#86868b;">
-  <div style="font-size:38px; margin-bottom:14px;">🔍</div>
+  {hsu_img}
   <div style="font-size:17px; font-weight:600; color:#1d1d1f; margin-bottom:6px;">
     안녕하세요, {name}님!
   </div>
@@ -1077,7 +1209,6 @@ def render_recommend(profile: dict):
     </div>
     <div style="font-size:13px; color:#86868b; margin-top:3px;">
       관심사: {', '.join(profile.get('interests',[])) or '없음'}
-      &nbsp;|&nbsp; 비교과: {'✅ 완료' if profile.get('extracurricular') else '⏳ 미완료'}
     </div>
   </div>
 </div>
@@ -1118,18 +1249,35 @@ def render_recommend(profile: dict):
 # ============================================================
 
 def main():
+    from PIL import Image
+    try:
+        hsu_icon = Image.open("/Users/dohyun/Desktop/캡스톤/hsu.png")
+    except Exception:
+        hsu_icon = "🔍"
     st.set_page_config(
         page_title="상상파인더",
-        page_icon="🔍",
+        page_icon=hsu_icon,
         layout="wide",
         initial_sidebar_state="expanded",
     )
 
     # 세션 초기화
-    if "onboarded"    not in st.session_state: st.session_state.onboarded    = False
-    if "profile"      not in st.session_state: st.session_state.profile      = {}
     if "chat_history" not in st.session_state: st.session_state.chat_history = []
     if "notices"      not in st.session_state: st.session_state.notices      = []
+    if "onboarded" not in st.session_state:
+        # 저장된 프로필 있으면 자동 로드
+        if os.path.exists(PROFILE_CACHE_PATH):
+            with open(PROFILE_CACHE_PATH, encoding="utf-8") as f:
+                saved = json.load(f)
+            if saved:
+                st.session_state.profile  = saved
+                st.session_state.onboarded = True
+            else:
+                st.session_state.profile   = {}
+                st.session_state.onboarded = False
+        else:
+            st.session_state.profile   = {}
+            st.session_state.onboarded = False
 
     # ── 온보딩 전 ─────────────────────────────────────────────
     if not st.session_state.onboarded:
