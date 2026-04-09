@@ -1,22 +1,5 @@
 # ============================================================
-# [파일 2] app.py — 로컬 Streamlit 실행용
-#
-# 사전 준비:
-#   1. train_colab.py 실행 후 saved_models/ 폴더를 이 파일과 같은 디렉토리에 복사
-#
-# 디렉토리 구조:
-#   project/
-#   ├── app.py
-#   ├── models/              ← saved_models/ 안의 내용을 복사
-#   │   ├── embed_finetuned/
-#   │   └── classify_finetuned/
-#   └── data/
-#       └── notices_cache.json
-#
-# 실행:
-#   pip install chromadb sentence-transformers requests \
-#               beautifulsoup4 rank_bm25 streamlit transformers torch
-#   streamlit run app.py
+# app.py — 상상파인더 (온보딩 → 사이드바 + 챗봇/추천게시물)
 # ============================================================
 
 import os, re, time, json, hashlib, warnings
@@ -30,16 +13,16 @@ import streamlit as st
 warnings.filterwarnings("ignore")
 
 # ── 설정 ──────────────────────────────────────────────────────────────
-EMBED_MODEL_PATH    = "/Users/dohyun/Desktop/캡스톤/qa_dataset_generation/models/embed_finetuned"
-SUMMARY_MODEL_PATH  = "/Users/dohyun/Desktop/캡스톤/qa_dataset_generation/models/summary_finetuned"
-CLASSIFY_MODEL_PATH = "/Users/dohyun/Desktop/캡스톤/qa_dataset_generation/models/classify_finetuned"
+EMBED_MODEL_PATH    = "/Users/dohyun/Desktop/캡스톤/0407/models/embed_finetuned"
+SUMMARY_MODEL_PATH  = "/Users/dohyun/Desktop/캡스톤/0407/models/summary_finetuned"
+CLASSIFY_MODEL_PATH = "/Users/dohyun/Desktop/캡스톤/0407/models/classify_finetuned"
 BASE_MODEL_EMBED    = "jhgan/ko-sroberta-multitask"
-CHROMA_DB_PATH      = "/Users/dohyun/Desktop/캡스톤/qa_dataset_generation/chroma_db"
-NOTICES_CACHE_PATH  = "/Users/dohyun/Desktop/캡스톤/qa_dataset_generation/data/notices_cache.json"
+CHROMA_DB_PATH      = "/Users/dohyun/Desktop/캡스톤/0407/chroma_db"
+NOTICES_CACHE_PATH  = "/Users/dohyun/Desktop/캡스톤/0407/data/notices_cache.json"
 
 BOARD_LIST_URL = "https://www.hansung.ac.kr/bbs/hansung/2127/artclList.do"
 HEADERS        = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-TARGET_YEAR    = str(datetime.now().year)              # ✅ fix #4: 연도 자동
+TARGET_YEAR    = str(datetime.now().year)
 
 CATEGORIES = ["장학", "비교과", "수업", "취업", "기타"]
 
@@ -55,8 +38,19 @@ _CATEGORY_PATTERN = re.compile(
 )
 _SUFFIX_PATTERN = re.compile(r"\s*(새글|hot|NEW)\s*$", re.IGNORECASE)
 
-os.makedirs("/Users/dohyun/Desktop/캡스톤/qa_dataset_generation/data", exist_ok=True)
+os.makedirs("/Users/dohyun/Desktop/캡스톤/0407/data", exist_ok=True)
 os.makedirs(CHROMA_DB_PATH, exist_ok=True)
+
+# 단과대 / 트랙·학과 매핑
+COLLEGE_MAP = {
+    "공과대학": ["컴퓨터공학부", "기계시스템공학과", "전자공학부", "건축학부", "산업경영공학부"],
+    "IT융합공학부": ["AI응용학과", "스마트ICT융합공학과", "미래자동차공학과"],
+    "사회과학대학": ["행정학과", "사회복지학과", "상담심리학과", "경찰학과"],
+    "경영대학": ["경영학부", "경영학과", "회계학과"],
+    "인문대학": ["영어영문학과", "한국어문학부", "역사문화학과"],
+    "예술대학": ["회화과", "패션디자인학과", "무대미술학과"],
+    "기타": ["기타"],
+}
 
 
 # ============================================================
@@ -92,20 +86,10 @@ def tokenize_ko(text: str) -> list:
 
 
 # ============================================================
-# 크롤러 — 본문 추출 (텍스트 / 이미지 OCR / PDF)
-#
-# pip install pdfplumber pytesseract Pillow
-# macOS:  brew install tesseract tesseract-lang
-# Ubuntu: sudo apt-get install tesseract-ocr tesseract-ocr-kor
+# 크롤러
 # ============================================================
 
 def _ocr_image(img_url: str) -> str:
-    """이미지 URL → OCR 텍스트 (한국어)
-    설치:
-      macOS:   brew install tesseract tesseract-lang
-      Ubuntu:  sudo apt-get install tesseract-ocr tesseract-ocr-kor
-      Windows: Tesseract 설치 후 경로 자동 설정됨
-    """
     try:
         import pytesseract
         from PIL import Image
@@ -126,14 +110,13 @@ def _ocr_image(img_url: str) -> str:
 
 
 def _extract_pdf(pdf_url: str) -> str:
-    """PDF URL → 텍스트 (pdfplumber)"""
     try:
         import pdfplumber
         from io import BytesIO
         res = requests.get(pdf_url, headers=HEADERS, timeout=15)
         res.raise_for_status()
         with pdfplumber.open(BytesIO(res.content)) as pdf:
-            pages = [p.extract_text() or "" for p in pdf.pages[:10]]  # 최대 10페이지
+            pages = [p.extract_text() or "" for p in pdf.pages[:10]]
         return " ".join(pages).strip()
     except Exception as e:
         print(f"    ⚠️ PDF 추출 실패 ({pdf_url[:50]}): {e}")
@@ -141,27 +124,16 @@ def _extract_pdf(pdf_url: str) -> str:
 
 
 def get_post_content(url: str) -> str:
-    """
-    공지 본문을 최대한 추출:
-      1) .txt 텍스트
-      2) .txt 안 이미지 → OCR
-      3) 첨부 PDF → pdfplumber
-    """
     try:
         res = requests.get(url, headers=HEADERS, timeout=10)
         res.raise_for_status()
         soup = BeautifulSoup(res.text, "html.parser")
         div  = soup.select_one(".txt")
-
         parts = []
-
         if div:
-            # 1) 텍스트 본문
             text = div.get_text(" ", strip=True)
             if text:
                 parts.append(text)
-
-            # 2) 이미지 본문 → OCR
             for img in div.find_all("img"):
                 src = img.get("src", "")
                 if not src:
@@ -171,8 +143,6 @@ def get_post_content(url: str) -> str:
                 ocr_text = _ocr_image(src)
                 if ocr_text:
                     parts.append(f"[이미지 OCR] {ocr_text}")
-
-        # 3) 첨부파일 PDF 추출
         BASE = "https://www.hansung.ac.kr"
         for a in soup.find_all("a", href=True):
             href     = a["href"]
@@ -182,9 +152,7 @@ def get_post_content(url: str) -> str:
                 pdf_text = _extract_pdf(pdf_url)
                 if pdf_text:
                     parts.append(f"[첨부PDF] {pdf_text[:1000]}")
-
         return " ".join(parts)
-
     except Exception as e:
         print(f"  ⚠️ 본문 크롤링 실패: {e}")
         return ""
@@ -194,13 +162,12 @@ def get_list_page(page: int):
     try:
         res = requests.get(BOARD_LIST_URL, params={"page": page},
                            headers=HEADERS, timeout=10)
-        res.raise_for_status()                             # ✅ fix #8
+        res.raise_for_status()
         soup  = BeautifulSoup(res.text, "html.parser")
         items = []
         for tr in soup.find_all("tr"):
             if not tr.find_all("td"):
                 continue
-            # ✅ fix #6: class 목록 중 "notice" 있는 경우만 고정공지로 처리
             tr_classes = tr.get("class") or []
             if "notice" in tr_classes:
                 continue
@@ -230,7 +197,6 @@ def get_list_page(page: int):
 
 def crawl_all() -> list:
     all_items, page = [], 1
-    print(f"📋 {TARGET_YEAR}년 공지 수집 시작...")
     while True:
         items, done = get_list_page(page)
         if items:
@@ -239,12 +205,10 @@ def crawl_all() -> list:
             break
         page += 1
         time.sleep(0.3)
-
-    for i, item in enumerate(all_items):
+    for item in all_items:
         item["body"]     = get_post_content(item["url"])
         item["category"] = classify_notice(item["title"], item["body"])
         time.sleep(0.2)
-
     with open(NOTICES_CACHE_PATH, "w", encoding="utf-8") as f:
         json.dump(all_items, f, ensure_ascii=False, indent=2)
     return all_items
@@ -258,14 +222,13 @@ def load_notices_cache() -> list:
 
 
 # ============================================================
-# 모델 로더 — st.cache_resource로 캐싱 (재실행해도 재로드 없음)
+# 모델 로더
 # ============================================================
 
 @st.cache_resource
 def get_embed_model():
     path = EMBED_MODEL_PATH if os.path.exists(EMBED_MODEL_PATH) else BASE_MODEL_EMBED
     from sentence_transformers import SentenceTransformer
-    # GPU 없는 로컬 환경 — CPU로 실행 (검색/추천에는 GPU 불필요)
     return SentenceTransformer(path, device="cpu")
 
 
@@ -275,8 +238,7 @@ def get_summary_pipeline():
         return None
     from transformers import pipeline
     return pipeline("summarization", model=SUMMARY_MODEL_PATH,
-                    tokenizer=SUMMARY_MODEL_PATH, max_new_tokens=128,
-                    device=-1)  # CPU 명시
+                    tokenizer=SUMMARY_MODEL_PATH, max_new_tokens=128, device=-1)
 
 
 @st.cache_resource
@@ -285,8 +247,7 @@ def get_classifier():
         return None, None
     from transformers import pipeline
     clf = pipeline("text-classification", model=CLASSIFY_MODEL_PATH,
-                   tokenizer=CLASSIFY_MODEL_PATH,
-                   device=-1)  # CPU 명시
+                   tokenizer=CLASSIFY_MODEL_PATH, device=-1)
     label_map_path = f"{CLASSIFY_MODEL_PATH}/label_map.json"
     label_map = {}
     if os.path.exists(label_map_path):
@@ -329,54 +290,35 @@ def index_notices(notices: list):
     model      = get_embed_model()
     collection = get_chroma()
     new_count  = update_count = 0
-
     for item in notices:
-        doc_id   = hashlib.md5(item["url"].encode()).hexdigest()
-        body     = item.get("body", "")
-        category = classify_notice(item["title"], body)
-        text     = f"제목: {item['title']}\n\n{body}"
+        doc_id    = hashlib.md5(item["url"].encode()).hexdigest()
+        body      = item.get("body", "")
+        category  = classify_notice(item["title"], body)
+        text      = f"제목: {item['title']}\n\n{body}"
         embedding = model.encode(text).tolist()
-
-        existing = collection.get(ids=[doc_id])["ids"]
+        existing  = collection.get(ids=[doc_id])["ids"]
         if existing:
-            # ✅ fix #3: add 대신 upsert → 본문/제목 변경 시 업데이트
             collection.update(
-                ids=[doc_id],
-                embeddings=[embedding],
-                documents=[text],
-                metadatas=[{
-                    "title":    item["title"],
-                    "url":      item["url"],
-                    "date":     item["date"],
-                    "category": category,
-                }]
+                ids=[doc_id], embeddings=[embedding], documents=[text],
+                metadatas=[{"title": item["title"], "url": item["url"],
+                            "date": item["date"], "category": category}]
             )
             update_count += 1
         else:
             collection.add(
-                ids=[doc_id],
-                embeddings=[embedding],
-                documents=[text],
-                metadatas=[{
-                    "title":    item["title"],
-                    "url":      item["url"],
-                    "date":     item["date"],
-                    "category": category,
-                }]
+                ids=[doc_id], embeddings=[embedding], documents=[text],
+                metadatas=[{"title": item["title"], "url": item["url"],
+                            "date": item["date"], "category": category}]
             )
             new_count += 1
-
-    print(f"임베딩 완료 — 신규: {new_count}건 / 업데이트: {update_count}건 / DB 총: {collection.count()}건")
 
 
 # ============================================================
 # 하이브리드 검색
-# ✅ fix #5: BM25 인덱스를 st.cache_data로 캐싱
 # ============================================================
 
 @st.cache_data(ttl=600, show_spinner=False)
 def _build_bm25_index(category_filter: str):
-    """카테고리별 BM25 인덱스를 캐싱 (10분 TTL)"""
     from rank_bm25 import BM25Okapi
     collection = get_chroma()
     where      = {"category": category_filter} \
@@ -385,10 +327,8 @@ def _build_bm25_index(category_filter: str):
     documents  = all_data["documents"]
     metadatas  = all_data["metadatas"]
     ids        = all_data["ids"]
-
     if not documents:
         return None, [], [], []
-
     tokenized_docs = [tokenize_ko(doc) for doc in documents]
     bm25           = BM25Okapi(tokenized_docs)
     return bm25, ids, documents, metadatas
@@ -398,17 +338,12 @@ def hybrid_search(query: str, top_k: int = 5, alpha: float = 0.7,
                   category_filter: str = None) -> list:
     model      = get_embed_model()
     collection = get_chroma()
-
-    cat_key = category_filter if category_filter and category_filter != "전체" else "전체"
-    where   = {"category": category_filter} \
-              if category_filter and category_filter != "전체" else None
-
-    # ✅ fix #5: 캐싱된 BM25 인덱스 사용
+    cat_key    = category_filter if category_filter and category_filter != "전체" else "전체"
+    where      = {"category": category_filter} \
+                 if category_filter and category_filter != "전체" else None
     bm25, ids, documents, metadatas = _build_bm25_index(cat_key)
     if bm25 is None:
         return []
-
-    # 벡터 검색
     q_emb     = model.encode(query).tolist()
     n_results = min(top_k * 2, len(documents))
     vr        = collection.query(
@@ -424,13 +359,9 @@ def hybrid_search(query: str, top_k: int = 5, alpha: float = 0.7,
             sim  = 1 - dist
             norm = (sim - min_sim) / (max_sim - min_sim + 1e-9)
             vector_scores[vid] = norm
-
-    # BM25 검색
-    bm25_raw  = bm25.get_scores(tokenize_ko(query))
-    bm25_max  = max(bm25_raw) if max(bm25_raw) > 0 else 1
+    bm25_raw    = bm25.get_scores(tokenize_ko(query))
+    bm25_max    = max(bm25_raw) if max(bm25_raw) > 0 else 1
     bm25_scores = {did: s / bm25_max for did, s in zip(ids, bm25_raw)}
-
-    # 합산
     all_ids = set(vector_scores) | set(bm25_scores)
     final   = {
         did: alpha * vector_scores.get(did, 0) + (1 - alpha) * bm25_scores.get(did, 0)
@@ -438,7 +369,6 @@ def hybrid_search(query: str, top_k: int = 5, alpha: float = 0.7,
     }
     top_ids  = sorted(final, key=lambda x: final[x], reverse=True)[:top_k]
     meta_map = dict(zip(ids, metadatas))
-
     return [
         {**meta_map[did], "score": round(final[did], 4)}
         for did in top_ids if did in meta_map
@@ -469,38 +399,587 @@ def summarize_notice(title: str, body: str) -> str:
 def recommend_notices(user_profile: dict, top_k: int = 5) -> list:
     model      = get_embed_model()
     collection = get_chroma()
-
     interests_str = ", ".join(user_profile.get("interests", []))
     query = (
-        f"{user_profile.get('department', '')} "
+        f"{user_profile.get('college', '')} "
+        f"{user_profile.get('track', '')} "
         f"{user_profile.get('grade', '')} 학생 관심사: {interests_str}"
     )
-
     n_docs = collection.count()
     if n_docs == 0:
         return []
-
     results = collection.query(
         query_embeddings=[model.encode(query).tolist()],
         n_results=min(top_k, n_docs),
         include=["metadatas", "distances"],
     )
-
     items = []
     for meta, dist in zip(results["metadatas"][0], results["distances"][0]):
         score = round(1 - dist, 4)
         if meta.get("category") in user_profile.get("interests", []):
             score = min(score + 0.05, 1.0)
         items.append({**meta, "score": score})
-
     items.sort(key=lambda x: x["score"], reverse=True)
     return items
 
 
 # ============================================================
-# Streamlit UI
+# CSS
 # ============================================================
 
+GLOBAL_CSS = """
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700&display=swap');
+
+html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"] {
+    background-color: #f2f2f7 !important;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display",
+                 "Noto Sans KR", sans-serif !important;
+}
+
+/* 사이드바 */
+[data-testid="collapsedControl"],
+[data-testid="stSidebarCollapsedControl"],
+[data-testid="stSidebarCollapseButton"],
+button[kind="header"],
+.st-emotion-cache-h5rgaw,
+[data-testid="stSidebar"] > div:first-child > div:first-child button { display: none !important; }
+section[data-testid="stSidebar"] {
+    width: 260px !important;
+    min-width: 260px !important;
+    transform: translateX(0) !important;
+    visibility: visible !important;
+    background: #ffffff !important;
+    border-right: 1px solid rgba(0,0,0,0.08) !important;
+}
+section[data-testid="stSidebar"] > div:first-child {
+    width: 260px !important;
+    padding: 24px 16px !important;
+}
+[data-testid="stSidebar"] * {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text",
+                 "Noto Sans KR", sans-serif !important;
+}
+
+/* 버튼 */
+.stButton > button {
+    background: #0a84ff !important;
+    color: white !important;
+    border: none !important;
+    border-radius: 10px !important;
+    font-size: 15px !important;
+    font-weight: 600 !important;
+    padding: 10px 20px !important;
+    transition: all 0.15s ease !important;
+    letter-spacing: -0.01em !important;
+}
+.stButton > button:hover {
+    background: #409cff !important;
+    transform: scale(1.01) !important;
+}
+
+/* 인풋 */
+.stTextInput > div > div > input {
+    background: white !important;
+    border: 1px solid rgba(0,0,0,0.12) !important;
+    border-radius: 12px !important;
+    font-size: 15px !important;
+    padding: 12px 16px !important;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06) !important;
+}
+.stTextInput > div > div > input:focus {
+    border-color: #0a84ff !important;
+    box-shadow: 0 0 0 3px rgba(10,132,255,0.15) !important;
+    outline: none !important;
+}
+
+/* 셀렉트박스 */
+.stSelectbox > div > div {
+    background: white !important;
+    border-radius: 10px !important;
+    border: 1px solid rgba(0,0,0,0.12) !important;
+}
+
+/* 멀티셀렉트 */
+.stMultiSelect > div > div {
+    background: white !important;
+    border-radius: 10px !important;
+    border: 1px solid rgba(0,0,0,0.12) !important;
+}
+/* 멀티셀렉트 체크박스 파란색 */
+.stMultiSelect [data-baseweb="checkbox"] svg { color: #0a84ff !important; fill: #0a84ff !important; }
+.stMultiSelect [aria-selected="true"] { background: rgba(10,132,255,0.08) !important; color: #0a84ff !important; }
+/* 라디오 파란색 */
+.stRadio [data-baseweb="radio"] div { border-color: #0a84ff !important; }
+.stRadio [data-baseweb="radio"] [data-checked="true"] div { background: #0a84ff !important; border-color: #0a84ff !important; }
+/* 전체 accent 빨강 → 파란색 override (config.toml 없이도 동작) */
+:root {
+    --primary-color: #0a84ff !important;
+    --primary-hue: 211 !important;
+}
+/* 라디오 버튼 */
+[data-baseweb="radio"] [data-checked="true"] > div:first-child {
+    background-color: #0a84ff !important;
+    border-color: #0a84ff !important;
+}
+[data-baseweb="radio"] > div:first-child {
+    border-color: #0a84ff !important;
+}
+/* 멀티셀렉트 태그 */
+[data-baseweb="tag"] { background-color: rgba(10,132,255,0.12) !important; }
+[data-baseweb="tag"] span { color: #0a84ff !important; }
+/* 체크박스 */
+[data-baseweb="checkbox"] [data-checked="true"] > div {
+    background-color: #0a84ff !important;
+    border-color: #0a84ff !important;
+}
+/* 포커스 링 */
+*:focus-visible { outline-color: #0a84ff !important; }
+/* 탭 underline */
+[data-baseweb="tab-highlight"] { background-color: #0a84ff !important; }
+/* 프로그레스/스피너 */
+[data-testid="stProgress"] > div > div { background-color: #0a84ff !important; }
+/* 슬라이더 */
+[data-baseweb="slider"] [role="slider"] { background-color: #0a84ff !important; border-color: #0a84ff !important; }
+[data-baseweb="slider"] div[data-testid="stSliderTrackFill"] { background-color: #0a84ff !important; }
+
+/* 라디오 */
+.stRadio > div { gap: 4px !important; }
+
+/* 탭 */
+.stTabs [data-baseweb="tab-list"] {
+    background: rgba(120,120,128,0.12) !important;
+    border-radius: 12px !important;
+    padding: 3px !important;
+    gap: 2px !important;
+    width: fit-content !important;
+    margin: 0 auto 16px auto !important;
+}
+.stTabs [data-baseweb="tab"] {
+    border-radius: 10px !important;
+    font-size: 14px !important;
+    font-weight: 500 !important;
+    color: #3c3c43 !important;
+    padding: 8px 20px !important;
+    font-family: -apple-system, "SF Pro Text", "Noto Sans KR", sans-serif !important;
+}
+.stTabs [aria-selected="true"] {
+    background: white !important;
+    color: #1d1d1f !important;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.12) !important;
+    font-weight: 600 !important;
+}
+/* 탭 하단 액센트 라인 파스텔 블루로 */
+.stTabs [data-baseweb="tab-highlight"] {
+    background-color: #7ab8f5 !important;
+}
+.stTabs [data-baseweb="tab-border"] {
+    background-color: transparent !important;
+}
+
+/* 채팅 */
+.chat-bubble-user {
+    background: #0a84ff;
+    color: white;
+    border-radius: 20px 20px 5px 20px;
+    padding: 12px 18px;
+    max-width: 72%;
+    margin-left: auto;
+    margin-bottom: 10px;
+    font-size: 15px;
+    line-height: 1.55;
+    word-break: break-word;
+}
+.chat-bubble-bot {
+    background: white;
+    color: #1d1d1f;
+    border-radius: 20px 20px 20px 5px;
+    padding: 12px 18px;
+    max-width: 80%;
+    margin-bottom: 10px;
+    font-size: 15px;
+    line-height: 1.55;
+    box-shadow: 0 1px 5px rgba(0,0,0,0.08);
+    word-break: break-word;
+}
+/* chat container - border=True 컨테이너 스타일 */
+[data-testid="stVerticalBlockBorderWrapper"]:has(.chat-bubble-user),
+[data-testid="stVerticalBlockBorderWrapper"]:has(.chat-bubble-bot) {
+    background: #f9f9fb !important;
+    border-radius: 18px !important;
+    min-height: 340px !important;
+    border: 1px solid rgba(0,0,0,0.06) !important;
+}
+
+/* 공지 카드 */
+.notice-card {
+    background: white;
+    border-radius: 14px;
+    padding: 16px 20px;
+    margin-bottom: 12px;
+    box-shadow: 0 1px 5px rgba(0,0,0,0.06);
+    border: 1px solid rgba(0,0,0,0.05);
+    transition: box-shadow 0.15s ease;
+}
+.notice-card:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.10); }
+.notice-tag {
+    display: inline-block;
+    background: rgba(10,132,255,0.1);
+    color: #0a84ff;
+    border-radius: 7px;
+    padding: 2px 9px;
+    font-size: 11px;
+    font-weight: 700;
+    margin-right: 8px;
+    letter-spacing: 0.02em;
+}
+.notice-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: #1d1d1f;
+    margin: 6px 0 2px 0;
+    line-height: 1.4;
+}
+.notice-date { font-size: 12px; color: #86868b; }
+.notice-summary {
+    font-size: 13px;
+    color: #3c3c43;
+    margin-top: 8px;
+    line-height: 1.55;
+}
+
+/* 사이드바 섹션 레이블 */
+.sb-label {
+    font-size: 10px;
+    font-weight: 700;
+    color: rgba(0,0,0,0.35);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin: 18px 0 6px 2px;
+}
+.sb-info-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 5px 0;
+}
+.sb-info-key {
+    font-size: 12px;
+    color: rgba(0,0,0,0.4);
+    min-width: 52px;
+}
+.sb-info-val {
+    font-size: 13px;
+    font-weight: 500;
+    color: #1d1d1f;
+    line-height: 1.4;
+}
+
+/* 온보딩 카드 — column 컨테이너에 직접 적용 */
+[data-testid="stVerticalBlockBorderWrapper"] {
+    background: white !important;
+    border-radius: 20px !important;
+    padding: 32px 36px !important;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.08) !important;
+    border: none !important;
+}
+
+/* 구분선 */
+hr { border: none; border-top: 1px solid rgba(0,0,0,0.08) !important; margin: 14px 0 !important; }
+
+/* 숨기기 */
+#MainMenu, footer, header { visibility: hidden; }
+</style>
+"""
+
+
+# ============================================================
+# 온보딩 화면
+# ============================================================
+
+def render_onboarding():
+    st.markdown(GLOBAL_CSS, unsafe_allow_html=True)
+
+    # 전체 화면 중앙 정렬
+    _, center, _ = st.columns([1, 2.2, 1])
+    with center:
+        st.markdown("<div style='height:60px'></div>", unsafe_allow_html=True)
+
+        # 로고
+        st.markdown("""
+<div style="text-align:center; margin-bottom:32px;">
+  <div style="display:inline-flex; align-items:center; justify-content:center;
+       width:64px; height:64px; background:linear-gradient(135deg,#0a84ff,#34aadc);
+       border-radius:18px; font-size:30px; margin-bottom:14px; box-shadow:0 4px 16px rgba(10,132,255,0.35);">
+    🔍
+  </div>
+  <div style="font-size:26px; font-weight:700; color:#1d1d1f; letter-spacing:-0.03em;">상상파인더</div>
+  <div style="font-size:14px; color:#86868b; margin-top:4px;">한성대 공지 스마트 검색</div>
+</div>
+""", unsafe_allow_html=True)
+
+        with st.container(border=True):
+            st.markdown("""
+<div style="font-size:18px; font-weight:700; color:#1d1d1f; margin-bottom:4px;">반갑습니다 👋</div>
+<div style="font-size:14px; color:#86868b; margin-bottom:8px;">먼저 기본 정보를 알려주세요.</div>
+""", unsafe_allow_html=True)
+
+            name = st.text_input("이름", placeholder="홍길동", key="ob_name")
+
+            college = st.selectbox(
+                "단과대",
+                list(COLLEGE_MAP.keys()),
+                key="ob_college"
+            )
+
+            track_options = COLLEGE_MAP.get(college, ["기타"])
+            track = st.selectbox("트랙 / 학과", track_options, key="ob_track")
+
+            grade = st.selectbox("학년", ["1학년", "2학년", "3학년", "4학년"], key="ob_grade")
+
+            interests = st.multiselect(
+                "관심사 (복수 선택 가능)",
+                CATEGORIES + ["교환학생"],
+                placeholder="관심 카테고리를 선택하세요",
+                key="ob_interests"
+            )
+
+            extracurricular = st.radio(
+                "비교과 점수를 채웠나요?",
+                ["예, 채웠어요", "아직 안 채웠어요"],
+                horizontal=True,
+                key="ob_extra"
+            )
+
+            st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+
+            if st.button("시작하기 →", use_container_width=True):
+                if not name.strip():
+                    st.markdown('<div style="background:#e8f1ff;color:#0a84ff;border-radius:10px;padding:10px 16px;font-size:14px;font-weight:500;border:1px solid #b3d1ff;">✏️ 이름을 입력해 주세요.</div>', unsafe_allow_html=True)
+                else:
+                    st.session_state.profile = {
+                        "name": name.strip(),
+                        "college": college,
+                        "track": track,
+                        "grade": grade,
+                        "interests": interests,
+                        "extracurricular": extracurricular == "예, 채웠어요",
+                    }
+                    st.session_state.onboarded = True
+                    st.rerun()
+
+
+# ============================================================
+# 사이드바
+# ============================================================
+
+def render_sidebar(profile: dict):
+    with st.sidebar:
+        # 로고
+        st.markdown("""
+<div style="display:flex; align-items:center; gap:10px; padding-bottom:18px;">
+  <div style="width:38px; height:38px; background:linear-gradient(135deg,#0a84ff,#34aadc);
+       border-radius:11px; display:flex; align-items:center; justify-content:center;
+       font-size:20px; flex-shrink:0; box-shadow:0 2px 8px rgba(10,132,255,0.4);">🔍</div>
+  <div>
+    <div style="font-size:16px; font-weight:700; color:#1d1d1f; letter-spacing:-0.02em;">상상파인더</div>
+    <div style="font-size:11px; color:#86868b; margin-top:1px;">Hansung Notice Finder</div>
+  </div>
+</div>
+<hr/>
+""", unsafe_allow_html=True)
+
+        # 사용자 정보
+        st.markdown('<div class="sb-label">내 정보</div>', unsafe_allow_html=True)
+
+        rows = [
+            ("이름", profile.get("name", "")),
+            ("단과대", profile.get("college", "")),
+            ("학과", profile.get("track", "")),
+            ("학년", profile.get("grade", "")),
+        ]
+        html = ""
+        for key, val in rows:
+            html += f"""
+<div class="sb-info-row">
+  <span class="sb-info-key">{key}</span>
+  <span class="sb-info-val">{val}</span>
+</div>"""
+        st.markdown(html, unsafe_allow_html=True)
+
+        st.markdown("<hr/>", unsafe_allow_html=True)
+
+        # 바로가기
+        st.markdown('<div class="sb-label">바로가기</div>', unsafe_allow_html=True)
+        links = [
+            ("🏫", "한성대학교", "https://www.hansung.ac.kr/hansung/index.do"),
+            ("💻", "e-Class", "https://learn.hansung.ac.kr/"),
+            ("📋", "종합정보시스템", "https://info.hansung.ac.kr/"),
+            ("📊", "스마트자기관리", "https://hsportal.hansung.ac.kr/"),
+            ("📚", "학술정보관", "https://hsel.hansung.ac.kr/"),
+        ]
+        link_html = ""
+        for icon, label, url in links:
+            link_html += f"""
+<a href="{url}" target="_blank" style="
+    display:flex; align-items:center; gap:9px;
+    padding:8px 10px; border-radius:9px;
+    text-decoration:none; color:#1d1d1f;
+    font-size:13px; font-weight:500;
+    transition:background 0.15s;
+    margin-bottom:2px;
+" onmouseover="this.style.background='rgba(0,0,0,0.05)'"
+  onmouseout="this.style.background='transparent'">
+  <span style="font-size:15px;">{icon}</span>
+  <span>{label}</span>
+  <span style="margin-left:auto; font-size:11px; color:#aeaeb2;">↗</span>
+</a>"""
+        st.markdown(link_html, unsafe_allow_html=True)
+
+
+
+
+# ============================================================
+# 메인 화면 — 챗봇
+# ============================================================
+
+def render_chatbot(profile: dict):
+    top_k = 5
+    alpha = 0.7
+
+    # 채팅 영역 — st.container로 감싸서 CSS 적용
+    with st.container(border=True):
+        if not st.session_state.chat_history:
+            name = profile.get("name", "")
+            st.markdown(f"""
+<div style="text-align:center; padding:48px 0 36px; color:#86868b;">
+  <div style="font-size:38px; margin-bottom:14px;">🔍</div>
+  <div style="font-size:17px; font-weight:600; color:#1d1d1f; margin-bottom:6px;">
+    안녕하세요, {name}님!
+  </div>
+  <div style="font-size:13px; line-height:1.6;">
+    한성대 공지를 자연어로 검색해보세요.<br/>
+    <span style="color:#aeaeb2;">"장학금 신청 기간 알려줘" &nbsp;·&nbsp; "취업박람회 언제야?" &nbsp;·&nbsp; "비교과 프로그램 추천해줘"</span>
+  </div>
+</div>
+""", unsafe_allow_html=True)
+        else:
+            for msg in st.session_state.chat_history:
+                if msg["role"] == "user":
+                    st.markdown(
+                        f'<div class="chat-bubble-user">{msg["content"]}</div>',
+                        unsafe_allow_html=True)
+                else:
+                    st.markdown(
+                        f'<div class="chat-bubble-bot">{msg["content"]}</div>',
+                        unsafe_allow_html=True)
+                    if msg.get("results"):
+                        for r in msg["results"]:
+                            body_map = {n["url"]: n.get("body", "")
+                                        for n in (st.session_state.notices or load_notices_cache())}
+                            body    = body_map.get(r["url"], "")
+                            summary = summarize_notice(r["title"], body) if body else ""
+                            st.markdown(f"""
+<div class="notice-card">
+  <span class="notice-tag">{r.get('category','기타')}</span>
+  <span class="notice-date">{r['date']}</span>
+  <div class="notice-title">{r['title']}</div>
+  {"<div class='notice-summary'>" + summary + "</div>" if summary else ""}
+  <div style="margin-top:10px;">
+    <a href="{r['url']}" target="_blank"
+       style="font-size:12px;color:#0a84ff;text-decoration:none;font-weight:600;">
+      공지 바로가기 →
+    </a>
+  </div>
+</div>
+""", unsafe_allow_html=True)
+
+    # 입력 폼: 카테고리 | 입력창 | 전송
+    with st.form("chat_form", clear_on_submit=True):
+        c0, c1, c2 = st.columns([1.2, 4, 0.8])
+        with c0:
+            cat_filter = st.selectbox("카테고리", ["전체"] + CATEGORIES,
+                                      label_visibility="collapsed", key="chat_cat")
+        with c1:
+            user_input = st.text_input(
+                "메시지", placeholder="무엇이 궁금하세요?",
+                label_visibility="collapsed")
+        with c2:
+            submitted = st.form_submit_button("전송", use_container_width=True)
+
+    if submitted and user_input:
+        st.session_state.chat_history.append({"role": "user", "content": user_input})
+        cat_filter = st.session_state.get("chat_cat", "전체")
+        results = hybrid_search(
+            user_input, top_k=top_k, alpha=alpha,
+            category_filter=cat_filter if cat_filter != "전체" else None,
+        )
+        reply = f"{len(results)}개의 관련 공지를 찾았습니다." if results \
+            else "관련 공지를 찾지 못했습니다. 캐시를 먼저 불러와 주세요."
+        st.session_state.chat_history.append(
+            {"role": "bot", "content": reply, "results": results})
+        st.rerun()
+
+    if st.session_state.chat_history:
+        if st.button("대화 초기화", use_container_width=False):
+            st.session_state.chat_history = []
+            st.rerun()
+
+
+# ============================================================
+# 메인 화면 — 추천 게시물
+# ============================================================
+
+def render_recommend(profile: dict):
+    st.markdown(f"""
+<div style="background:white; border-radius:14px; padding:16px 20px; margin-bottom:20px;
+     box-shadow:0 1px 5px rgba(0,0,0,0.06); display:flex; align-items:center; gap:16px;">
+  <div style="font-size:30px;">🎓</div>
+  <div>
+    <div style="font-size:15px; font-weight:700; color:#1d1d1f;">
+      {profile.get('college','')} &nbsp;·&nbsp; {profile.get('track','')} &nbsp;·&nbsp; {profile.get('grade','')}
+    </div>
+    <div style="font-size:13px; color:#86868b; margin-top:3px;">
+      관심사: {', '.join(profile.get('interests',[])) or '없음'}
+      &nbsp;|&nbsp; 비교과: {'✅ 완료' if profile.get('extracurricular') else '⏳ 미완료'}
+    </div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
+
+    col_l, col_c, col_r = st.columns([2, 1.5, 2])
+    with col_c:
+        btn_rec = st.button("맞춤 공지 추천받기", type="primary", use_container_width=True)
+    if btn_rec:
+        with st.spinner("추천 중..."):
+            recs = recommend_notices(profile, top_k=5)
+        if not recs:
+            st.info("추천 결과가 없습니다. 먼저 캐시를 불러와 주세요.")
+        else:
+            body_map = {n["url"]: n.get("body", "")
+                        for n in (st.session_state.notices or load_notices_cache())}
+            for r in recs:
+                body    = body_map.get(r["url"], "")
+                summary = summarize_notice(r["title"], body) if body else ""
+                st.markdown(f"""
+<div class="notice-card">
+  <span class="notice-tag">{r.get('category','기타')}</span>
+  <span class="notice-date">{r['date']}</span>
+  <div class="notice-title">{r['title']}</div>
+  {"<div class='notice-summary'>" + summary + "</div>" if summary else ""}
+  <div style="margin-top:10px;">
+    <a href="{r['url']}" target="_blank"
+       style="font-size:12px;color:#0a84ff;text-decoration:none;font-weight:600;">
+      공지 바로가기 →
+    </a>
+  </div>
+</div>
+""", unsafe_allow_html=True)
+
+
+# ============================================================
+# 엔트리포인트
+# ============================================================
 
 def main():
     st.set_page_config(
@@ -510,551 +989,42 @@ def main():
         initial_sidebar_state="expanded",
     )
 
-    # ── Apple Finder 스타일 CSS ────────────────────────────────
-    st.markdown("""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600&display=swap');
+    # 세션 초기화
+    if "onboarded"    not in st.session_state: st.session_state.onboarded    = False
+    if "profile"      not in st.session_state: st.session_state.profile      = {}
+    if "chat_history" not in st.session_state: st.session_state.chat_history = []
+    if "notices"      not in st.session_state: st.session_state.notices      = []
 
-/* 사이드바 항상 펼침 강제 */
-[data-testid="collapsedControl"] { display: none !important; }
-[data-testid="stSidebarCollapsedControl"] { display: none !important; }
-.css-1d391kg { display: flex !important; }
-section[data-testid="stSidebar"] {
-    width: 280px !important;
-    min-width: 280px !important;
-    transform: translateX(0px) !important;
-    visibility: visible !important;
-    display: flex !important;
-}
-section[data-testid="stSidebar"] > div:first-child {
-    width: 280px !important;
-}
+    # ── 온보딩 전 ─────────────────────────────────────────────
+    if not st.session_state.onboarded:
+        render_onboarding()
+        return
 
-/* 전체 배경 */
-html, body, [data-testid="stAppViewContainer"] {
-    background-color: #f5f5f7 !important;
-    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display",
-                 "Noto Sans KR", sans-serif !important;
-}
+    # ── 온보딩 후 ─────────────────────────────────────────────
+    st.markdown(GLOBAL_CSS, unsafe_allow_html=True)
+    profile = st.session_state.profile
 
-/* 사이드바 — Finder 좌측 패널 */
-[data-testid="stSidebar"] {
-    background: rgba(248,248,250,0.97) !important;
-    border-right: 1px solid rgba(0,0,0,0.08) !important;
-}
-[data-testid="stSidebar"] * {
-    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text",
-                 "Noto Sans KR", sans-serif !important;
-}
-
-/* 메인 영역 */
-[data-testid="stMain"] {
-    background-color: #f5f5f7 !important;
-}
-
-/* 버튼 */
-.stButton > button {
-    background: #0071e3 !important;
-    color: white !important;
-    border: none !important;
-    border-radius: 8px !important;
-    font-size: 14px !important;
-    font-weight: 500 !important;
-    padding: 8px 18px !important;
-    transition: all 0.15s ease !important;
-    font-family: -apple-system, "SF Pro Text", "Noto Sans KR", sans-serif !important;
-}
-.stButton > button:hover {
-    background: #0077ed !important;
-    transform: scale(1.01) !important;
-}
-
-/* 인풋 박스 */
-.stTextInput > div > div > input,
-.stTextArea > div > div > textarea {
-    background: white !important;
-    border: 1px solid rgba(0,0,0,0.12) !important;
-    border-radius: 10px !important;
-    font-size: 15px !important;
-    padding: 10px 14px !important;
-    font-family: -apple-system, "SF Pro Text", "Noto Sans KR", sans-serif !important;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.06) !important;
-}
-.stTextInput > div > div > input:focus {
-    border-color: #0071e3 !important;
-    box-shadow: 0 0 0 3px rgba(0,113,227,0.15) !important;
-}
-
-/* 셀렉트박스 */
-.stSelectbox > div > div {
-    background: white !important;
-    border-radius: 8px !important;
-    border: 1px solid rgba(0,0,0,0.12) !important;
-}
-
-/* 탭 */
-.stTabs [data-baseweb="tab-list"] {
-    background: rgba(120,120,128,0.12) !important;
-    border-radius: 10px !important;
-    padding: 3px !important;
-    gap: 2px !important;
-}
-.stTabs [data-baseweb="tab"] {
-    border-radius: 8px !important;
-    font-size: 13px !important;
-    font-weight: 500 !important;
-    color: #3c3c43 !important;
-    padding: 6px 16px !important;
-    font-family: -apple-system, "SF Pro Text", "Noto Sans KR", sans-serif !important;
-}
-.stTabs [aria-selected="true"] {
-    background: white !important;
-    color: #1d1d1f !important;
-    box-shadow: 0 1px 4px rgba(0,0,0,0.12) !important;
-}
-
-/* 채팅 메시지 */
-.chat-bubble-user {
-    background: #0071e3;
-    color: white;
-    border-radius: 18px 18px 4px 18px;
-    padding: 10px 16px;
-    max-width: 70%;
-    margin-left: auto;
-    margin-bottom: 8px;
-    font-size: 15px;
-    line-height: 1.5;
-    word-break: break-word;
-}
-.chat-bubble-bot {
-    background: white;
-    color: #1d1d1f;
-    border-radius: 18px 18px 18px 4px;
-    padding: 10px 16px;
-    max-width: 80%;
-    margin-bottom: 8px;
-    font-size: 15px;
-    line-height: 1.5;
-    box-shadow: 0 1px 4px rgba(0,0,0,0.08);
-    word-break: break-word;
-}
-.chat-area {
-    background: white;
-    border-radius: 16px;
-    padding: 20px;
-    min-height: 300px;
-    box-shadow: 0 1px 6px rgba(0,0,0,0.06);
-    margin-bottom: 16px;
-}
-
-/* 공지 카드 */
-.notice-card {
-    background: white;
-    border-radius: 12px;
-    padding: 14px 18px;
-    margin-bottom: 10px;
-    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
-    border: 1px solid rgba(0,0,0,0.06);
-    transition: box-shadow 0.15s ease;
-}
-.notice-card:hover {
-    box-shadow: 0 4px 12px rgba(0,0,0,0.10);
-}
-.notice-tag {
-    display: inline-block;
-    background: rgba(0,113,227,0.1);
-    color: #0071e3;
-    border-radius: 6px;
-    padding: 2px 8px;
-    font-size: 11px;
-    font-weight: 600;
-    margin-right: 8px;
-}
-.notice-title {
-    font-size: 15px;
-    font-weight: 600;
-    color: #1d1d1f;
-    margin: 4px 0;
-}
-.notice-date {
-    font-size: 12px;
-    color: #86868b;
-}
-.notice-summary {
-    font-size: 13px;
-    color: #3c3c43;
-    margin-top: 6px;
-    line-height: 1.5;
-}
-
-/* 사이드바 섹션 헤더 */
-.sidebar-section {
-    font-size: 11px;
-    font-weight: 600;
-    color: #86868b;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    padding: 12px 0 6px 0;
-}
-
-/* 상태 배지 */
-.status-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    font-size: 12px;
-    color: #3c3c43;
-    padding: 4px 10px;
-    background: rgba(120,120,128,0.1);
-    border-radius: 20px;
-    margin-bottom: 4px;
-}
-.status-dot-green { color: #34c759; }
-.status-dot-yellow { color: #ff9f0a; }
-
-/* 로고 영역 */
-.finder-logo {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 8px 0 16px 0;
-}
-.logo-icon {
-    width: 36px;
-    height: 36px;
-    background: linear-gradient(135deg, #0071e3, #34aadc);
-    border-radius: 9px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 18px;
-}
-.logo-text {
-    font-size: 17px;
-    font-weight: 600;
-    color: #1d1d1f;
-    letter-spacing: -0.02em;
-}
-.logo-sub {
-    font-size: 11px;
-    color: #86868b;
-    font-weight: 400;
-}
-
-/* 구분선 */
-hr { border: none; border-top: 1px solid rgba(0,0,0,0.08) !important; margin: 12px 0 !important; }
-
-/* 숨기기 */
-#MainMenu, footer, header { visibility: hidden; }
-
-
-</style>
-""", unsafe_allow_html=True)
-
-    # ── 세션 초기화 ────────────────────────────────────────────
-    if "chat_history" not in st.session_state:
-        st.session_state.chat_history = []
-    if "profile" not in st.session_state:
-        st.session_state.profile = {}
-    if "notices" not in st.session_state:
-        st.session_state.notices = []
-
-    # ── 전체 레이아웃: 좌측 패널 + 메인 ──────────────────────
-    col_left, col_main_area = st.columns([1, 3.5], gap="small")
-
-    # ── 좌측 패널 (Finder 사이드바 역할) ──────────────────────
-    with col_left:
-        st.markdown("""
-<div style="background:rgba(248,248,250,0.97); border-radius:16px;
-     border:1px solid rgba(0,0,0,0.08); padding:20px 16px;
-     min-height:90vh; position:sticky; top:0;">
-
-<div class="finder-logo">
-  <div class="logo-icon">🔍</div>
-  <div>
-    <div class="logo-text">상상파인더</div>
-    <div class="logo-sub">Hansung Notice Finder</div>
-  </div>
-</div>
-<hr style="margin:12px 0;">
-</div>
-""", unsafe_allow_html=True)
-
-        # 모델 상태
-        st.markdown('<div class="sidebar-section">시스템 상태</div>', unsafe_allow_html=True)
-        embed_ready    = os.path.exists(EMBED_MODEL_PATH)
-        classify_ready = os.path.exists(CLASSIFY_MODEL_PATH)
-        cache_ready    = os.path.exists(NOTICES_CACHE_PATH)
-        db_count       = get_chroma().count()
-
-        def badge(label, ok, ok_text="정상", fail_text="미설치"):
-            dot = "🟢" if ok else "🟡"
-            txt = ok_text if ok else fail_text
-            st.markdown(f'<div class="status-badge">{dot} {label} — {txt}</div>',
-                       unsafe_allow_html=True)
-
-        badge("임베딩 모델", embed_ready, "파인튜닝됨", "베이스 모델")
-        badge("분류 모델",   classify_ready, "파인튜닝됨", "키워드 방식")
-        badge("공지 캐시",   cache_ready, "있음", "없음")
-        st.markdown(f'<div class="status-badge">🔵 DB — {db_count}건</div>',
-                   unsafe_allow_html=True)
-
-        st.markdown("<hr style='margin:12px 0;'>", unsafe_allow_html=True)
-
-        # 프로필
-        st.markdown('<div class="sidebar-section">내 프로필</div>', unsafe_allow_html=True)
-        dept = st.selectbox("학과", [
-            "컴퓨터공학부", "AI응용학과", "기계시스템공학과",
-            "전자공학부", "경영학부", "영어영문학과", "기타"
-        ])
-        grade     = st.selectbox("학년", ["1학년","2학년","3학년","4학년"])
-        interests = st.multiselect("관심사", CATEGORIES + ["교환학생"],
-                                   placeholder="카테고리 선택")
-        if st.button("프로필 저장", use_container_width=True):
-            st.session_state.profile = {
-                "department": dept, "grade": grade, "interests": interests
-            }
-            st.success("저장됐습니다.")
-
-        st.markdown("<hr style='margin:12px 0;'>", unsafe_allow_html=True)
-
-        # 데이터 관리
-        st.markdown('<div class="sidebar-section">데이터</div>', unsafe_allow_html=True)
-        if st.button("📥 공지 크롤링 & 저장", use_container_width=True):
-            with st.spinner("크롤링 중..."):
-                notices = crawl_all()
-            with st.spinner("임베딩 저장 중..."):
-                index_notices(notices)
+    # 캐시 자동 로드 (최초 1회)
+    if not st.session_state.notices:
+        notices = load_notices_cache()
+        if notices:
             st.session_state.notices = notices
-            _build_bm25_index.clear()
-            st.success(f"{len(notices)}건 완료")
-
-        if st.button("📂 캐시 불러오기 & 저장", use_container_width=True):
-            notices = load_notices_cache()
-            if notices:
-                with st.spinner("임베딩 저장 중..."):
-                    index_notices(notices)
-                st.session_state.notices = notices
+            # ChromaDB에 이미 데이터가 있으면 index_notices 생략 (속도 최적화)
+            if get_chroma().count() == 0:
+                index_notices(notices)
                 _build_bm25_index.clear()
-                st.success(f"{len(notices)}건 완료")
-            else:
-                st.warning("캐시 없음. data/notices_cache.json을 확인하세요.")
 
-    # ── 메인 영역 ──────────────────────────────────────────────
-    with col_main_area:
-      tab1, tab2, tab3 = st.tabs(["  검색  ", "  추천  ", "  전체 공지  "])
+    render_sidebar(profile)
 
-      # ══════════════════════════════════════════════════════
-      # 탭 1 — 챗봇 검색
-      # ══════════════════════════════════════════════════════
-      with tab1:
-          col_main, col_opt = st.columns([3, 1])
-          with col_opt:
-              cat_filter = st.selectbox("카테고리", ["전체"] + CATEGORIES,
-                                       label_visibility="collapsed")
-              top_k = st.slider("결과 수", 1, 10, 5, label_visibility="collapsed")
-              alpha = st.slider("벡터/BM25", 0.0, 1.0, 0.7, 0.1,
-                               label_visibility="collapsed",
-                               help="1.0=순수 벡터, 0.0=순수 BM25")
+    # 메인 탭
+    tab_chat, tab_rec = st.tabs(["  💬 챗봇 검색  ", "  ✨ 추천 게시물  "])
 
-          with col_main:
-              # 채팅 히스토리
-              chat_container = st.container()
-              with chat_container:
-                  st.markdown('<div class="chat-area">', unsafe_allow_html=True)
-                  if not st.session_state.chat_history:
-                      st.markdown("""
-<div style="text-align:center; padding: 40px 0; color: #86868b;">
-    <div style="font-size:36px; margin-bottom:12px;">🔍</div>
-    <div style="font-size:16px; font-weight:500; color:#1d1d1f; margin-bottom:6px;">상상파인더</div>
-    <div style="font-size:13px;">한성대 공지를 자연어로 검색하세요</div>
-    <div style="font-size:12px; margin-top:16px; color:#aeaeb2;">
-      "장학금 신청 기간 알려줘" · "취업박람회 언제야?" · "비교과 프로그램 추천해줘"
-    </div>
-</div>
-""", unsafe_allow_html=True)
-                  else:
-                      for msg in st.session_state.chat_history:
-                          if msg["role"] == "user":
-                              st.markdown(
-                                  f'<div class="chat-bubble-user">{msg["content"]}</div>',
-                                  unsafe_allow_html=True)
-                          else:
-                              st.markdown(
-                                  f'<div class="chat-bubble-bot">{msg["content"]}</div>',
-                                  unsafe_allow_html=True)
-                              if msg.get("results"):
-                                  for r in msg["results"]:
-                                      body_map = {n["url"]: n.get("body","")
-                                                 for n in (st.session_state.notices or load_notices_cache())}
-                                      body    = body_map.get(r["url"], "")
-                                      summary = summarize_notice(r["title"], body) if body else ""
-                                      st.markdown(f"""
-<div class="notice-card">
-    <span class="notice-tag">{r.get('category','기타')}</span>
-    <span class="notice-date">{r['date']}</span>
-    <div class="notice-title">{r['title']}</div>
-    {"<div class='notice-summary'>" + summary + "</div>" if summary else ""}
-    <div style="margin-top:8px;">
-      <a href="{r['url']}" target="_blank"
-         style="font-size:12px;color:#0071e3;text-decoration:none;font-weight:500;">
-        공지 바로가기 →
-      </a>
-    </div>
-</div>
-""", unsafe_allow_html=True)
-                  st.markdown('</div>', unsafe_allow_html=True)
+    with tab_chat:
+        render_chatbot(profile)
 
-              # 입력창
-              with st.form("chat_form", clear_on_submit=True):
-                  c1, c2 = st.columns([5, 1])
-                  with c1:
-                      user_input = st.text_input(
-                          "메시지",
-                          placeholder="무엇이 궁금하세요?",
-                          label_visibility="collapsed"
-                      )
-                  with c2:
-                      submitted = st.form_submit_button("전송", use_container_width=True)
+    with tab_rec:
+        render_recommend(profile)
 
-              if submitted and user_input:
-                  st.session_state.chat_history.append(
-                      {"role": "user", "content": user_input}
-                  )
-                  results = hybrid_search(
-                      user_input, top_k=top_k, alpha=alpha,
-                      category_filter=cat_filter if cat_filter != "전체" else None,
-                  )
-                  if results:
-                      reply = f"{len(results)}개의 관련 공지를 찾았습니다."
-                  else:
-                      reply = "관련 공지를 찾지 못했습니다. 캐시를 먼저 불러와 주세요."
-                  st.session_state.chat_history.append(
-                      {"role": "bot", "content": reply, "results": results}
-                  )
-                  st.rerun()
-
-              # 히스토리 초기화
-              if st.session_state.chat_history:
-                  if st.button("대화 초기화", use_container_width=False):
-                      st.session_state.chat_history = []
-                      st.rerun()
-
-      # ══════════════════════════════════════════════════════
-      # 탭 2 — 맞춤 추천
-      # ══════════════════════════════════════════════════════
-      with tab2:
-          profile = st.session_state.profile
-          if not profile:
-              st.markdown("""
-<div style="text-align:center; padding:60px 0; color:#86868b;">
-    <div style="font-size:32px; margin-bottom:12px;">👤</div>
-    <div style="font-size:15px; color:#1d1d1f; font-weight:500;">프로필을 먼저 설정하세요</div>
-    <div style="font-size:13px; margin-top:6px;">사이드바에서 학과, 학년, 관심사를 입력해주세요</div>
-</div>
-""", unsafe_allow_html=True)
-          else:
-              st.markdown(f"""
-<div style="background:white; border-radius:12px; padding:14px 18px; margin-bottom:16px;
-       box-shadow:0 1px 4px rgba(0,0,0,0.06); display:flex; align-items:center; gap:16px;">
-    <div style="font-size:28px;">🎓</div>
-    <div>
-      <div style="font-size:15px; font-weight:600; color:#1d1d1f;">
-        {profile.get('department','')} · {profile.get('grade','')}
-      </div>
-      <div style="font-size:13px; color:#86868b; margin-top:2px;">
-        관심사: {', '.join(profile.get('interests',[])) or '없음'}
-      </div>
-    </div>
-</div>
-""", unsafe_allow_html=True)
-              if st.button("맞춤 공지 추천받기", type="primary"):
-                  with st.spinner("추천 중..."):
-                      recs = recommend_notices(profile, top_k=5)
-                  if not recs:
-                      st.info("추천 결과가 없습니다. 먼저 캐시를 불러와 주세요.")
-                  else:
-                      body_map = {n["url"]: n.get("body","")
-                                 for n in (st.session_state.notices or load_notices_cache())}
-                      for r in recs:
-                          body    = body_map.get(r["url"], "")
-                          summary = summarize_notice(r["title"], body) if body else ""
-                          st.markdown(f"""
-<div class="notice-card">
-    <span class="notice-tag">{r.get('category','기타')}</span>
-    <span class="notice-date">{r['date']}</span>
-    <span style="font-size:11px;color:#86868b;margin-left:6px;">
-      유사도 {r['score']}
-    </span>
-    <div class="notice-title">{r['title']}</div>
-    {"<div class='notice-summary'>" + summary + "</div>" if summary else ""}
-    <div style="margin-top:8px;">
-      <a href="{r['url']}" target="_blank"
-         style="font-size:12px;color:#0071e3;text-decoration:none;font-weight:500;">
-        공지 바로가기 →
-      </a>
-    </div>
-</div>
-""", unsafe_allow_html=True)
-
-      # ══════════════════════════════════════════════════════
-      # 탭 3 — 전체 공지
-      # ══════════════════════════════════════════════════════
-      with tab3:
-          notices = st.session_state.notices or load_notices_cache()
-          if not notices:
-              st.markdown("""
-<div style="text-align:center; padding:60px 0; color:#86868b;">
-    <div style="font-size:32px; margin-bottom:12px;">📋</div>
-    <div style="font-size:15px; color:#1d1d1f; font-weight:500;">공지가 없습니다</div>
-    <div style="font-size:13px; margin-top:6px;">사이드바에서 캐시를 불러와 주세요</div>
-</div>
-""", unsafe_allow_html=True)
-          else:
-              c1, c2 = st.columns([2, 1])
-              with c1:
-                  search_keyword = st.text_input("공지 검색", placeholder="제목으로 검색...",
-                                                label_visibility="collapsed")
-              with c2:
-                  cat_filter3 = st.selectbox("카테고리", ["전체"] + CATEGORIES,
-                                            key="tab3_cat", label_visibility="collapsed")
-
-              filtered = notices
-              if cat_filter3 != "전체":
-                  filtered = [n for n in filtered if n.get("category") == cat_filter3]
-              if search_keyword:
-                  filtered = [n for n in filtered if search_keyword.lower() in n["title"].lower()]
-
-              st.markdown(
-                  f'<div style="font-size:13px;color:#86868b;margin-bottom:12px;">'
-                  f'총 {len(filtered)}건</div>',
-                  unsafe_allow_html=True)
-
-              for n in filtered[:50]:  # 최대 50건 표시
-                  st.markdown(f"""
-<div class="notice-card">
-    <span class="notice-tag">{n.get('category','기타')}</span>
-    <span class="notice-date">{n['date']}</span>
-    <div class="notice-title">{n['title']}</div>
-    <div style="margin-top:6px;">
-      <a href="{n['url']}" target="_blank"
-         style="font-size:12px;color:#0071e3;text-decoration:none;font-weight:500;">
-        공지 바로가기 →
-      </a>
-    </div>
-</div>
-""", unsafe_allow_html=True)
-
-              if len(filtered) > 50:
-                  st.markdown(
-                      f'<div style="text-align:center;font-size:13px;color:#86868b;padding:12px;">'
-                      f'상위 50건만 표시됩니다</div>',
-                      unsafe_allow_html=True)
-
-
-# ============================================================
-# 엔트리포인트
-# ============================================================
 
 if __name__ == "__main__":
     main()
