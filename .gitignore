@@ -212,3 +212,4 @@ __marimo__/
 # Project-specific
 chroma_db/
 qa_dataset_generation/data/
+.DS_Store
