@@ -66,7 +66,7 @@ user-style {n_user}개 (type: user_short):
     "question": "질문",
     "answer": "공지사항에 근거한 정확한 답변",
     "type": "factual|procedural|conditional|user_short",
-    "source_span": "답변 근거가 되는 원문 구절 (20자 이내)"
+    "source_span": "답변에 사용된 원문 구절을 쉼표로 구분해 나열 (각 구절 20자 이내, 최대 3개)"                                                                                    
   }}
 ]"""
 
@@ -104,7 +104,18 @@ def generate_seed_qa(notice: str, n_well: int, n_user: int) -> list[dict]:
 JUDGE_SYSTEM = """당신은 QA 데이터셋 품질 평가 전문가입니다.
 반드시 JSON만 출력하세요."""
 
-JUDGE_HALLUCINATION_PROMPT = """공지사항과 아래 QA 쌍을 비교하여 hallucination 여부를 판별하세요.
+# 3-A: 답변에서 검증 대상 사실 추출 (날짜·금액·조건·인원 등 atomic claim)
+JUDGE_CLAIM_EXTRACT_PROMPT = """아래 답변에서 공지사항과 대조해야 할 사실적 주장을 모두 추출하세요.
+날짜, 금액, 인원, 조건, 장소, URL 등 구체적 수치·정보 위주로 추출합니다.
+일반적 설명문("신청하실 수 있습니다" 등)은 제외합니다.
+
+A: {answer}
+
+JSON 배열로만 출력 (주장이 없으면 빈 배열):
+["주장1", "주장2", ...]"""
+
+# 3-B: 추출된 claim 각각을 공지와 대조
+JUDGE_VERIFY_CLAIMS_PROMPT = """공지사항에 아래 사실적 주장들이 각각 명시되어 있는지 확인하세요.
 
 공지사항:
 {notice}
@@ -112,18 +123,25 @@ JUDGE_HALLUCINATION_PROMPT = """공지사항과 아래 QA 쌍을 비교하여 ha
 Q: {question}
 A: {answer}
 
-판별 기준:
-- answer에 공지사항에 없는 사실·수치·날짜·조건이 포함되어 있으면 hallucination
-- question이 공지사항 범위를 완전히 벗어난 내용이면 hallucination
-- 공지사항에 명시되지 않은 내용을 answer가 추론·가정으로 채우면 hallucination
+확인할 주장:
+{claims_numbered}
+
+각 주장을 아래 기준으로 분류하세요:
+- "verified": 공지사항에 명확히 있음
+- "not_found": 공지사항에 없음 → hallucination
+- "inferred": 공지사항에서 합리적으로 추론 가능하나 명시 안 됨 → hallucination 아님
 
 JSON으로만 출력:
 {{
+  "results": [
+    {{"claim": "주장", "status": "verified|not_found|inferred", "evidence": "공지 원문 근거 (없으면 null)"}}
+  ],
   "hallucination": true|false,
-  "hallucinated_span": "공지에 없는 부분 (없으면 null)",
-  "reason": "한 줄 이유"
+  "hallucinated_claims": ["not_found 판정된 주장들"],
+  "reason": "한 줄 요약"
 }}"""
 
+# 3-C: 품질 점수
 JUDGE_QUALITY_PROMPT = """다음 QA 쌍이 공지사항에 얼마나 충실한지 점수를 매기세요.
 (hallucination은 이미 별도 검증됐으므로 여기서는 근거 명확성과 답변 완성도만 평가)
 
@@ -144,53 +162,72 @@ JSON으로만 출력:
 {{"score": 1~5, "reason": "한 줄 이유"}}"""
 
 
-def judge_qa(notice: str, qa: dict) -> dict:
-    """LLM-as-Judge 2단계: hallucination 탐지 → 품질 점수"""
-    # 3-A: hallucination 탐지
+def _call_judge(prompt: str, max_tokens: int) -> dict:
     with client.messages.stream(
         model=JUDGE_MODEL,
-        max_tokens=300,
+        max_tokens=max_tokens,
         system=JUDGE_SYSTEM,
-        messages=[{"role": "user", "content": JUDGE_HALLUCINATION_PROMPT.format(
-            notice=notice,
-            question=qa["question"],
-            answer=qa["answer"],
-        )}],
+        messages=[{"role": "user", "content": prompt}],
     ) as stream:
         final = stream.get_final_message()
-    hall_text = next(b.text for b in final.content if b.type == "text")
-    hall_result = _parse_json_response(hall_text)
+    text = next(b.text for b in final.content if b.type == "text")
+    return _parse_json_response(text)
 
-    # hallucination 확정이면 score=0으로 즉시 반환 (품질 평가 생략)
-    if hall_result.get("hallucination"):
+
+def judge_qa(notice: str, qa: dict) -> dict:
+    """LLM-as-Judge 3단계: claim 추출 → 개별 검증 → 품질 점수"""
+    question, answer = qa["question"], qa["answer"]
+
+    # 3-A: 답변에서 검증 대상 사실 추출
+    claims: list = _call_judge(
+        JUDGE_CLAIM_EXTRACT_PROMPT.format(answer=answer),
+        max_tokens=300,
+    )
+    # claims가 리스트가 아닌 경우 방어
+    if not isinstance(claims, list):
+        claims = []
+
+    if claims:
+        # 3-B: claim별 공지 대조
+        claims_numbered = "\n".join(f"{i+1}. {c}" for i, c in enumerate(claims))
+        verify_result = _call_judge(
+            JUDGE_VERIFY_CLAIMS_PROMPT.format(
+                notice=notice,
+                question=question,
+                answer=answer,
+                claims_numbered=claims_numbered,
+            ),
+            max_tokens=600,
+        )
+        is_hallucinated = verify_result.get("hallucination", False)
+        hallucinated_claims = verify_result.get("hallucinated_claims", [])
+        hall_reason = verify_result.get("reason", "")
+    else:
+        # 사실적 주장이 없는 답변(절차 안내 등)은 hallucination 불가
+        is_hallucinated = False
+        hallucinated_claims = []
+        hall_reason = "사실적 주장 없음 — 검증 대상 없음"
+
+    if is_hallucinated:
         return {
             **qa,
             "hallucination": True,
-            "hallucinated_span": hall_result.get("hallucinated_span"),
-            "hall_reason": hall_result.get("reason"),
+            "hallucinated_claims": hallucinated_claims,
+            "hall_reason": hall_reason,
             "judge_score": 0,
-            "judge_reason": f"[HALLUCINATION] {hall_result.get('reason')}",
+            "judge_reason": f"[HALLUCINATION] {hall_reason}",
         }
 
-    # 3-B: 품질 점수
-    with client.messages.stream(
-        model=JUDGE_MODEL,
+    # 3-C: 품질 점수
+    qual_result = _call_judge(
+        JUDGE_QUALITY_PROMPT.format(notice=notice, question=question, answer=answer),
         max_tokens=200,
-        system=JUDGE_SYSTEM,
-        messages=[{"role": "user", "content": JUDGE_QUALITY_PROMPT.format(
-            notice=notice,
-            question=qa["question"],
-            answer=qa["answer"],
-        )}],
-    ) as stream:
-        final = stream.get_final_message()
-    qual_text = next(b.text for b in final.content if b.type == "text")
-    qual_result = _parse_json_response(qual_text)
+    )
 
     return {
         **qa,
         "hallucination": False,
-        "hallucinated_span": None,
+        "hallucinated_claims": [],
         "hall_reason": None,
         "judge_score": qual_result["score"],
         "judge_reason": qual_result["reason"],
@@ -253,48 +290,45 @@ def run_pipeline(notices: list[dict], output_path: str = OUTPUT_PATH):
 
             all_generated = seed_qa
 
-            # Step 3: Judge 2단계 검증 (비활성화)
-            # print("  → Judge(Haiku 4.5): hallucination 탐지 + 품질 검증 중...", flush=True)
-            # for qa in all_generated:
-            #     qa["notice_id"] = i
-            #     qa["notice_title"] = notice_obj["title"]
-            #     try:
-            #         judged = judge_qa(notice_str, qa)
-            #     except Exception as e:
-            #         print(f"     ⚠️ judge 실패: {e}", flush=True)
-            #         continue
-            #     stats["total"] += 1
-            #     if judged["hallucination"]:
-            #         stats["hallucinated"] += 1
-            #         print(f"     [HALL] {qa['question'][:40]} → {judged['hallucinated_span']}", flush=True)
-            #     elif judged["judge_score"] >= QUALITY_THRESHOLD:
-            #         all_qa.append(judged)
-            #         stats["passed"] += 1
-            #         out_file.write(json.dumps(judged, ensure_ascii=False) + "\n")
-            #         out_file.flush()
-            #     else:
-            #         stats["low_quality"] += 1
-            #     time.sleep(0.3)
-            # print(f"     통과: {stats['passed']} / hallucination: {stats['hallucinated']} / 저품질: {stats['low_quality']} / 전체: {stats['total']}", flush=True)
-
+            # Step 3: Judge 3단계 검증 (claim 추출 → 개별 검증 → 품질 점수)
+            print("  → Judge(Haiku 4.5): claim 추출 + hallucination 탐지 + 품질 검증 중...", flush=True)
             for qa in all_generated:
                 qa["notice_id"] = i
                 qa["notice_title"] = notice_obj["title"]
-                all_qa.append(qa)
-                out_file.write(json.dumps(qa, ensure_ascii=False) + "\n")
-                out_file.flush()
-                stats["passed"] += 1
-
-            print(f"     누적 저장: {stats['passed']}개", flush=True)
+                try:
+                    judged = judge_qa(notice_str, qa)
+                except Exception as e:
+                    print(f"     ⚠️ judge 실패: {e}", flush=True)
+                    continue
+                stats["total"] += 1
+                if judged["hallucination"]:
+                    stats["hallucinated"] += 1
+                    bad_claims = judged.get("hallucinated_claims", [])
+                    print(f"     [HALL] {qa['question'][:40]} → {bad_claims}", flush=True)
+                elif judged["judge_score"] >= QUALITY_THRESHOLD:
+                    all_qa.append(judged)
+                    stats["passed"] += 1
+                    out_file.write(json.dumps(judged, ensure_ascii=False) + "\n")
+                    out_file.flush()
+                else:
+                    stats["low_quality"] += 1
+                time.sleep(0.3)
+            print(
+                f"     통과: {stats['passed']} / "
+                f"hallucination: {stats['hallucinated']} / "
+                f"저품질: {stats['low_quality']} / "
+                f"전체: {stats['total']}",
+                flush=True,
+            )
     finally:
         out_file.close()
 
     print(f"\n{'='*50}")
     print(f"완료! 총 {stats['passed']}개 QA 저장 → {output_path}")
-    # if stats["total"] > 0:
-    #     print(f"통과율:        {stats['passed']}/{stats['total']} ({stats['passed']/stats['total']*100:.1f}%)")
-    #     print(f"Hallucination: {stats['hallucinated']}/{stats['total']} ({stats['hallucinated']/stats['total']*100:.1f}%)")
-    #     print(f"저품질 탈락:   {stats['low_quality']}/{stats['total']} ({stats['low_quality']/stats['total']*100:.1f}%)")
+    if stats["total"] > 0:
+        print(f"통과율:        {stats['passed']}/{stats['total']} ({stats['passed']/stats['total']*100:.1f}%)")
+        print(f"Hallucination: {stats['hallucinated']}/{stats['total']} ({stats['hallucinated']/stats['total']*100:.1f}%)")
+        print(f"저품질 탈락:   {stats['low_quality']}/{stats['total']} ({stats['low_quality']/stats['total']*100:.1f}%)")
     return all_qa
 
 
