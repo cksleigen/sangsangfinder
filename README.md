@@ -74,6 +74,55 @@ python3.11 -m venv .venv311
 .venv311/bin/streamlit run app.py
 ```
 
+## 크롤링
+
+### 연도별 사용 코드
+
+| 연도 | 파일 | 환경 | 비고 |
+|------|------|------|------|
+| 2026 | `colab_crawl.py` | Google Colab | OCR·PDF 포함, Drive에서 실행 |
+| 2025 (본문) | `crawl_2025.py` | 로컬 | 텍스트 본문만 수집 |
+| 2025 (제목) | `crawl_2025_titles.py` | 로컬 | 제목·URL·날짜·카테고리만 수집 |
+
+### 2025년 크롤링 — 2단계
+
+**1단계**: 제목·URL·날짜·카테고리만 수집
+
+```bash
+python crawl_2025_titles.py
+# 출력: crawl_2025_titles.json
+```
+
+**2단계**: 본문 텍스트까지 수집 (OCR·PDF 미포함)
+
+```bash
+python crawl_2025.py
+# 출력: qa_dataset_generation/data/2025_notice.json
+```
+
+### 2026년 크롤링 — Google Colab
+
+`colab_crawl.py`를 Colab에 업로드 후 실행. Drive에 저장된 `2026_notice.json`을 읽어 본문을 재크롤링하며, Clova OCR 및 PDF 추출을 포함합니다.
+
+```
+SOURCE_PATH = '/content/drive/MyDrive/sangsangfinder/2026_notice.json'
+SAVE_PATH   = '/content/drive/MyDrive/sangsangfinder/2026_notice.json'
+```
+
+### 크롤러 모듈 구조
+
+`crawler.py`는 OCR·PDF 추출 함수를 제공하는 **공통 모듈**로, `app.py` 등에서 import해서 사용합니다. `colab_crawl.py`는 이 로직을 포함하여 단독 실행 가능한 Colab용 스크립트로 확장한 버전입니다.
+
+| 기능 | `crawler.py` | `crawl_2025.py` | `colab_crawl.py` |
+|------|:---:|:---:|:---:|
+| 텍스트 본문 추출 | O | O | O |
+| 이미지 OCR (Clova) | O | X | O |
+| PDF 추출 | O | X | O |
+| 카테고리 분류 | X | O | O |
+| 단독 실행 (`__main__`) | X | O | O |
+
+---
+
 ## QA 데이터셋 생성
 
 Teacher-Student-Judge 구조로 공지사항 기반 QA 쌍을 자동 생성합니다.
