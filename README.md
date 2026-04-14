@@ -125,19 +125,24 @@ SAVE_PATH   = '/content/drive/MyDrive/sangsangfinder/2026_notice.json'
 
 ## QA 데이터셋 생성
 
-Teacher-Student-Judge 구조로 공지사항 기반 QA 쌍을 자동 생성합니다.
+Teacher-Judge 구조로 공지사항 기반 QA 쌍을 자동 생성합니다.
 
 ```bash
 .venv311/bin/python qa_dataset_generation/run_qa_pipeline.py
 ```
 
-| 역할 | 모델 |
-|------|------|
-| Teacher (문제 생성) | claude-opus-4-6 |
-| Student (답변 생성) | claude-haiku-4-5 |
-| Judge (품질 평가) | claude-haiku-4-5 |
+| 역할 | 모델 | 설명 |
+|------|------|------|
+| Teacher (QA 생성) | claude-sonnet-4-6 | well-formed + 유저형 QA 쌍 생성 |
+| Judge (품질 검증) | gemini-2.5-flash | claim 추출 → hallucination 탐지 → 품질 점수(1~5) |
 
-생성 결과는 `qa_dataset_generation/data/qa_dataset.jsonl`에 저장됩니다.
+**Judge 3단계 검증:**
+1. **Claim 추출** — 답변에서 날짜·금액·조건 등 사실적 주장 추출
+2. **Hallucination 탐지** — 각 주장을 원문 공지와 대조
+3. **품질 점수** — 근거 명확성·답변 완성도 평가 (임계값: 4점 이상 통과)
+
+- 입력: `qa_dataset_generation/data/2026_notice.json`
+- 출력: `qa_dataset_generation/data/qa_dataset.jsonl` (append 모드, resume 지원)
 
 ## 파인튜닝
 
