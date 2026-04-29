@@ -9,3 +9,8 @@ struct Notice {
     let score: Double
     let summary: String?
 }
+
+struct SearchResult {
+    let reply: String
+    let notices: [Notice]
+}
