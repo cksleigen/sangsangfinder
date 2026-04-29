@@ -1,0 +1,154 @@
+"""
+Hybrid search (BM25 + dense vector) and LLM reply generation.
+Extracted from app.py: hybrid_search, _build_bm25_index, generate_llm_reply.
+"""
+from __future__ import annotations
+
+from ..core.config import GEMINI_API_KEY
+from ..core.models import get_embed_model, get_chroma, load_notices_cache
+from ..core.utils import tokenize_ko
+
+# Module-level BM25 cache (replaces @st.cache_data from app.py)
+_bm25_cache: dict[str, tuple] = {}
+
+
+def _build_bm25_index(category_filter: str | None):
+    from rank_bm25 import BM25Okapi
+
+    key        = category_filter if category_filter and category_filter != "전체" else "전체"
+    if key in _bm25_cache:
+        return _bm25_cache[key]
+
+    collection = get_chroma()
+    where      = {"category": category_filter} if key != "전체" else None
+    all_data   = collection.get(include=["documents", "metadatas"], where=where)
+
+    documents = all_data["documents"]
+    metadatas = all_data["metadatas"]
+    ids       = all_data["ids"]
+
+    if not documents:
+        return None, [], [], []
+
+    tokenized_docs = [tokenize_ko(doc) for doc in documents]
+    bm25           = BM25Okapi(tokenized_docs)
+    _bm25_cache[key] = (bm25, ids, documents, metadatas)
+    return bm25, ids, documents, metadatas
+
+
+def invalidate_bm25_cache() -> None:
+    _bm25_cache.clear()
+
+
+def hybrid_search(
+    query: str,
+    top_k: int = 5,
+    alpha: float = 0.7,
+    category_filter: str | None = None,
+) -> list[dict]:
+    model      = get_embed_model()
+    collection = get_chroma()
+    cat_key    = category_filter if category_filter and category_filter != "전체" else None
+    where      = {"category": category_filter} if cat_key else None
+
+    bm25, ids, documents, metadatas = _build_bm25_index(cat_key)
+    if bm25 is None:
+        return []
+
+    q_emb     = model.encode(query).tolist()
+    n_results = min(top_k * 5, len(documents))
+    vr        = collection.query(
+        query_embeddings=[q_emb],
+        n_results=n_results,
+        include=["metadatas", "distances"],
+        where=where,
+    )
+
+    vector_scores: dict[str, float] = {}
+    raw_dist = vr["distances"][0]
+    if raw_dist:
+        max_sim = 1 - min(raw_dist)
+        min_sim = 1 - max(raw_dist)
+        for vid, dist in zip(vr["ids"][0], raw_dist):
+            sim  = 1 - dist
+            norm = (sim - min_sim) / (max_sim - min_sim + 1e-9)
+            vector_scores[vid] = norm
+
+    bm25_raw    = bm25.get_scores(tokenize_ko(query))
+    bm25_max    = max(bm25_raw) if max(bm25_raw) > 0 else 1
+    bm25_scores = {did: s / bm25_max for did, s in zip(ids, bm25_raw)}
+
+    all_ids = set(vector_scores) | set(bm25_scores)
+    final   = {
+        did: alpha * vector_scores.get(did, 0) + (1 - alpha) * bm25_scores.get(did, 0)
+        for did in all_ids
+    }
+
+    meta_map  = dict(zip(ids, metadatas))
+    seen_urls: dict[str, dict] = {}
+    for did in sorted(final, key=lambda x: final[x], reverse=True):
+        meta = meta_map.get(did)
+        if not meta:
+            continue
+        url = meta["url"]
+        if url not in seen_urls:
+            seen_urls[url] = {**meta, "score": round(final[did], 4)}
+        if len(seen_urls) >= top_k:
+            break
+
+    return list(seen_urls.values())
+
+
+def generate_llm_reply(
+    user_query: str,
+    results: list[dict],
+    profile: dict,
+    is_first: bool = False,
+) -> str:
+    if not GEMINI_API_KEY:
+        if results:
+            return f"총 {len(results)}개의 관련 공지를 찾았습니다."
+        return "관련 공지를 찾지 못했습니다. GEMINI_API_KEY를 설정해 주세요."
+
+    if not results:
+        return "관련 공지를 찾지 못했습니다. 다른 키워드로 검색해보세요."
+
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=GEMINI_API_KEY)
+        model = genai.GenerativeModel("gemini-2.5-flash")
+    except Exception as e:
+        return f"[Gemini 모델 로드 오류] {e}"
+
+    notices     = load_notices_cache()
+    body_map    = {n["url"]: n.get("body", "") for n in notices}
+    context_parts = []
+    for i, r in enumerate(results[:3], 1):
+        body = body_map.get(r["url"], "")[:800]
+        context_parts.append(
+            f"[공지 {i}]\n제목: {r['title']}\n날짜: {r['date']}\n내용: {body if body else '(본문 없음)'}"
+        )
+    context = "\n\n".join(context_parts)
+
+    name     = profile.get("name", "")
+    greeting = f"{name}님, 안녕하세요. " if is_first and name else ""
+
+    prompt = f"""당신은 한성대학교 공지사항 안내 도우미입니다.
+
+아래 공지사항 본문을 바탕으로 사용자 질문에 직접적이고 구체적으로 답변하세요.
+- 날짜, 금액, 조건 등 구체적인 정보가 있으면 반드시 포함하세요.
+- "공지를 참고하세요" 같은 말은 절대 하지 마세요. 정보를 직접 알려주세요.
+- 2~3문장으로 간결하게 답변하세요.
+- 답변 시작: "{greeting}"{"(인사 없이 바로 답변)" if not is_first else ""}
+
+[공지 본문]
+{context}
+
+[질문]
+{user_query}"""
+
+    try:
+        response = model.generate_content(prompt)
+        return response.text.strip()
+    except Exception as e:
+        return f"[Gemini 오류] {e}"
