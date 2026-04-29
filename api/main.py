@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
@@ -19,13 +20,17 @@ from .services.search_service import (
 )
 
 
+def _run_indexing(notices: list) -> None:
+    index_notices(notices)
+    invalidate_bm25_cache()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 시작 시 공지 캐시 로드 & ChromaDB 인덱싱
     notices = load_notices_cache()
     if notices:
-        index_notices(notices)
-        invalidate_bm25_cache()
+        # 인덱싱을 백그라운드 스레드에서 실행 — 서버가 즉시 뜸
+        asyncio.create_task(asyncio.to_thread(_run_indexing, notices))
     yield
 
 
