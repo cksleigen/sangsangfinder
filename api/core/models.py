@@ -90,7 +90,10 @@ def index_notices(notices: list[dict]) -> int:
     """Index notices into ChromaDB. Returns count of newly indexed documents."""
     model      = get_embed_model()
     collection = get_chroma()
-    new_count  = 0
+
+    all_ids:   list[str]  = []
+    all_docs:  list[str]  = []
+    all_metas: list[dict] = []
 
     for item in notices:
         doc_id   = hashlib.md5(item["url"].encode()).hexdigest()
@@ -109,12 +112,16 @@ def index_notices(notices: list[dict]) -> int:
             "date":     item["date"],
             "category": category,
         }
-        collection.add(
-            ids        = [f"{doc_id}_{i}" for i in range(len(chunks))],
-            embeddings = model.encode(chunks).tolist(),
-            documents  = chunks,
-            metadatas  = [meta] * len(chunks),
-        )
-        new_count += 1
+        all_ids.extend([f"{doc_id}_{i}" for i in range(len(chunks))])
+        all_docs.extend(chunks)
+        all_metas.extend([meta] * len(chunks))
 
-    return new_count
+    if not all_ids:
+        return 0
+
+    # 모든 청크를 한 번에 배치 인코딩 (건당 호출 대비 수십 배 빠름)
+    embeddings = model.encode(all_docs, batch_size=64, show_progress_bar=False).tolist()
+    collection.add(ids=all_ids, embeddings=embeddings, documents=all_docs, metadatas=all_metas)
+
+    # 실제 새로 추가된 문서 수 (청크 수가 아닌 공지 수)
+    return len({mid.rsplit("_", 1)[0] for mid in all_ids})
