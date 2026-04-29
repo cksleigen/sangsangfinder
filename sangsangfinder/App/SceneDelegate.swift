@@ -1,4 +1,5 @@
 import UIKit
+import SwiftUI
 
 class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     var window: UIWindow?
@@ -10,7 +11,7 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     ) {
         guard let windowScene = scene as? UIWindowScene else { return }
         window = UIWindow(windowScene: windowScene)
-        window?.rootViewController = UINavigationController(rootViewController: MainViewController())
+        window?.rootViewController = UIHostingController(rootView: SearchView())
         window?.makeKeyAndVisible()
     }
 }
