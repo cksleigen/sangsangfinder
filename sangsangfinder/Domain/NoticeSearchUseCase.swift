@@ -1,5 +1,5 @@
 import Foundation
 
 protocol NoticeSearchUseCase {
-    func search(query: String) async throws -> [Notice]
+    func search(query: String, category: String?) async throws -> SearchResult
 }
