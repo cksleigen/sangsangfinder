@@ -2,7 +2,11 @@
 # app.py — 상상파인더 (온보딩 → 사이드바 + 챗봇/추천게시물)
 # ============================================================
 
-import os, re, time, json, hashlib, warnings
+import os, re, time, json, hashlib, warnings, logging
+# suppress chromadb 0.6.3 telemetry bug noise before any chromadb import
+logging.getLogger("chromadb.telemetry").setLevel(logging.CRITICAL)
+logging.getLogger("chromadb.telemetry.product").setLevel(logging.CRITICAL)
+logging.getLogger("chromadb.telemetry.posthog").setLevel(logging.CRITICAL)
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse, urlencode, parse_qs, urlunparse
