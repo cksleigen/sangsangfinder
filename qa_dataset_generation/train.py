@@ -4,9 +4,9 @@ from bs4 import BeautifulSoup
 from urllib.parse import urlparse, urlencode, parse_qs, urlunparse
 from datetime import datetime
 
-# crawler.py는 프로젝트 루트에 위치 — 하위 디렉토리에서 실행 시 경로 추가
+# crawling/crawler.py는 프로젝트 루트 기준 패키지 — 루트를 sys.path에 추가
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from crawler import get_post_content  # noqa: E402  (중복 구현 제거)
+from crawling.crawler import get_post_content  # noqa: E402  (중복 구현 제거)
 
 warnings.filterwarnings("ignore")
 

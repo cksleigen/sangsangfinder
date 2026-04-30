@@ -37,17 +37,21 @@
 # save_models()
 # ============================================================
 
-import os, re, time, json, warnings
+import os, re, sys, time, json, warnings
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse, urlencode, parse_qs, urlunparse
 from datetime import datetime
 
-from crawler import get_post_content  # noqa: E402  (중복 구현 제거)
+# 프로젝트 루트를 sys.path에 추가 (crawling 패키지 접근)
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from crawling.crawler import get_post_content  # noqa: E402  (중복 구현 제거)
 
 warnings.filterwarnings("ignore")
 
 # ── 설정 ──────────────────────────────────────────────────────────────
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 BOARD_LIST_URL     = "https://www.hansung.ac.kr/bbs/hansung/2127/artclList.do"
 HEADERS            = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 TARGET_YEAR        = str(datetime.now().year)          # ✅ fix #4: 연도 자동
@@ -55,11 +59,11 @@ TARGET_YEAR        = str(datetime.now().year)          # ✅ fix #4: 연도 자�
 BASE_MODEL_EMBED   = "jhgan/ko-sroberta-multitask"
 BASE_MODEL_CLS     = "klue/bert-base"
 
-EMBED_MODEL_PATH    = "./models/embed_finetuned"
-CLASSIFY_MODEL_PATH = "./models/classify_finetuned"
+EMBED_MODEL_PATH    = os.path.join(_ROOT, "models", "embed_finetuned")
+CLASSIFY_MODEL_PATH = os.path.join(_ROOT, "models", "classify_finetuned")
 
-NOTICES_CACHE_PATH  = "./data/2026_notice.json"
-SYNTHETIC_QA_PATH   = "./data/synthetic_qa.json"
+NOTICES_CACHE_PATH  = os.path.join(_ROOT, "data", "2026_notice.json")
+SYNTHETIC_QA_PATH   = os.path.join(_ROOT, "data", "synthetic_qa.json")
 DRIVE_SAVE_PATH     = "./saved_models"  # ✅ 로컬/클라우드 범용 경로
 
 CATEGORIES = ["취업/채용", "인턴십", "장학금", "학자금/근로장학", "학사행정",

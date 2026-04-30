@@ -222,7 +222,7 @@ OUTPUT_PATH = DATA_DIR / "qa_judged_sample_gemini.jsonl"
 with open(INPUT_PATH, encoding="utf-8") as f:
     samples = [json.loads(line) for _, line in zip(range(5), f)]
 
-with open('/Users/mac/Projects/sangsangfinder/qa_dataset_generation/data/2026_notice.json', encoding="utf-8") as f:
+with open(DATA_DIR / "2026_notice.json", encoding="utf-8") as f:
     notices = json.load(f)
 
 def format_notice(n: dict) -> str:

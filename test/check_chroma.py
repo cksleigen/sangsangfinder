@@ -12,7 +12,7 @@ from collections import Counter, defaultdict
 
 import chromadb
 
-_BASE_DIR      = os.path.dirname(os.path.abspath(__file__))
+_BASE_DIR      = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # 프로젝트 루트
 CHROMA_DB_PATH = os.path.join(_BASE_DIR, "chroma_db")
 COLLECTION_NAME = "hansung_notices"
 REQUIRED_META_KEYS = {"title", "url", "date", "category"}

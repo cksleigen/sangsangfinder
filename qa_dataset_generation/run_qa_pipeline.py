@@ -38,8 +38,9 @@ def get_qa_count(body: str) -> tuple[int, int]:
         return 2, 1  # 총 3개
     return 3, 2      # 총 5개
 
-NOTICES_CACHE_PATH = "./data/2026_notice.json"
-OUTPUT_PATH        = "./data/qa_dataset.jsonl"
+_ROOT              = Path(__file__).parent.parent
+NOTICES_CACHE_PATH = _ROOT / "data" / "2026_notice.json"
+OUTPUT_PATH        = _ROOT / "data" / "qa_dataset.jsonl"
 
 # ─────────────────────────────────────────
 # Step 1. Teacher로 seed QA 생성

@@ -8,7 +8,7 @@ from bs4 import BeautifulSoup
 from urllib.parse import urlparse, urlencode, parse_qs, urlunparse
 from datetime import datetime
 
-from crawler import get_post_content  # noqa: E402  (중복 구현 제거)
+from crawling.crawler import get_post_content  # noqa: E402  (중복 구현 제거)
 
 import streamlit as st
 

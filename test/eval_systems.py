@@ -21,7 +21,7 @@ from rank_bm25 import BM25Okapi
 from sentence_transformers import SentenceTransformer, CrossEncoder
 
 # ── 경로 ─────────────────────────────────────────────────────────────────
-ROOT            = Path(__file__).parent
+ROOT            = Path(__file__).parent.parent  # 프로젝트 루트
 QA_DATA_DIR     = ROOT / "qa_dataset_generation" / "data"
 CORPUS_PATH     = QA_DATA_DIR / "test_notices_2025.json"
 QA_PATH         = QA_DATA_DIR / "qa_test_2025.jsonl"
