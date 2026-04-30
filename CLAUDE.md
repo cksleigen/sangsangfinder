@@ -6,7 +6,6 @@ Hansung University notice search & recommendation system using RAG pipeline.
 - Hybrid search: BM25 (0.3) + dense vector (0.7)
 - Vector DB: ChromaDB → Pinecone 마이그레이션 예정
 - UI: Streamlit
-- Deployment: Streamlit Community Cloud 예정 (변경 가능)
 
 ---
 
@@ -41,20 +40,6 @@ GEMINI_API_KEY=...
 - Python 3.10+ 권장
 - `pip install -r requirements.txt`
 - GPU 환경(Colab T4)에서 `train.py` 실행 권장
-
----
-
-## Key Files
-
-| 파일 | 역할 |
-|------|------|
-| `app.py` | Streamlit UI + RAG 파이프라인 진입점 |
-| `crawler.py` | 한성대 공지사항 크롤러 |
-| `colab_crawl.py` | Colab 환경용 크롤러 |
-| `train.py` | 임베딩/요약/분류 모델 파인튜닝 (Colab) |
-| `crawl_2025_titles.py` | 2025년 공지 제목 수집 스크립트 |
-| `embedding_search_v1.py` | 임베딩 검색 초기 구현 |
-| `qa_dataset_generation/` | QA 데이터셋 생성 파이프라인 |
 
 ---
 
@@ -93,14 +78,6 @@ GEMINI_API_KEY=...
 새 기능 구현 순서:
 1. `tests/` 에 실패하는 테스트 먼저 작성
 2. 테스트를 통과하는 최소 구현
-3. 리팩토링
-```
-tests/
-test_chunker.py       # 청킹 로직
-test_retriever.py     # hybrid search 결과 검증
-test_reranker.py      # reranker context compression
-test_eval_pipeline.py # split 격리 검증 포함
-```
 
 테스트 실행:
 ```bash

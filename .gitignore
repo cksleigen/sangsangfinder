@@ -213,6 +213,7 @@ __marimo__/
 chroma_db/
 qa_dataset_generation/data/
 .DS_Store
+CLAUDE.md
 
 # Xcode
 *.xcodeproj/*
