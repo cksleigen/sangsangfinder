@@ -1,9 +1,11 @@
 """
-4개 검색 시스템 비교 평가 스크립트
-  System A: ko-sroberta 원본 + dense only
-  System B: ko-sroberta 원본 + BM25 hybrid  (α=0.7)
-  System C: 파인튜닝 임베딩 + BM25 hybrid   (α=0.7)  <- 현재 시스템
-  System D: System C + cross-encoder reranker
+6개 검색 시스템 비교 평가 스크립트 (구 모델 vs 신 모델)
+  System A: jhgan/ko-sroberta (OLD) + dense only
+  System B: jhgan/ko-sroberta (OLD) + BM25 hybrid  (α=0.7)
+  System C: BM-K/KoSimCSE    (NEW) + dense only
+  System D: BM-K/KoSimCSE    (NEW) + BM25 hybrid   (α=0.7)
+  System E: 파인튜닝 임베딩   (NEW) + BM25 hybrid   (α=0.7)  <- 현재 시스템
+  System F: System E + cross-encoder reranker
 
 Metrics (TEST split): Recall@5, MRR, NDCG@5
 Corpus : qa_dataset_generation/data/test_notices_2025.json  (100 notices)
@@ -25,7 +27,9 @@ ROOT            = Path(__file__).parent.parent  # 프로젝트 루트
 QA_DATA_DIR     = ROOT / "qa_dataset_generation" / "data"
 CORPUS_PATH     = QA_DATA_DIR / "test_notices_2025.json"
 QA_PATH         = QA_DATA_DIR / "qa_test_2025.jsonl"
-BASE_MODEL      = "jhgan/ko-sroberta-multitask"
+OLD_BASE_MODEL  = "jhgan/ko-sroberta-multitask"         # 구 베이스 모델
+NEW_BASE_MODEL  = "BM-K/KoSimCSE-roberta-multitask"     # 신 베이스 모델
+BASE_MODEL      = NEW_BASE_MODEL                        # 하위 호환 alias
 FINETUNED_MODEL = str(ROOT / "models" / "embed_finetuned")
 
 # cross-encoder 모델: 한국어 지원 모델로 교체 권장
@@ -158,6 +162,8 @@ def compare_systems():
     print("=" * 65)
     print(f"[TEST split] QA 파일 : {QA_PATH.name}")
     print(f"[TEST split] 코퍼스  : {CORPUS_PATH.name}  ({len(corpus)}개 공지)")
+    print(f"  OLD 베이스 모델: {OLD_BASE_MODEL}")
+    print(f"  NEW 베이스 모델: {NEW_BASE_MODEL}")
     print("=" * 65)
 
     docs         = [format_doc(n) for n in corpus]
@@ -179,54 +185,75 @@ def compare_systems():
 
     results = {}
 
-    # ── System A ─────────────────────────────────────────────────────────
+    # ── System A : OLD 베이스 + dense ────────────────────────────────────
     print("─" * 65)
-    print("System A: ko-sroberta 원본 + dense only")
-    sys_a    = DenseRetriever(BASE_MODEL, docs)
+    print(f"System A: {OLD_BASE_MODEL} (OLD) + dense only")
+    sys_a    = DenseRetriever(OLD_BASE_MODEL, docs)
     ranked_a = [sys_a.search(q, K) for q in queries]
-    results["A (base+dense)"] = compute_scores(ranked_a, gt_indices)
-    print(f"  결과: {results['A (base+dense)']}\n")
+    results["A (old+dense)"] = compute_scores(ranked_a, gt_indices)
+    print(f"  결과: {results['A (old+dense)']}\n")
 
-    # ── System B ─────────────────────────────────────────────────────────
+    # ── System B : OLD 베이스 + hybrid ───────────────────────────────────
     print("─" * 65)
-    print("System B: ko-sroberta 원본 + BM25 hybrid")
-    sys_b    = HybridRetriever(BASE_MODEL, docs)
+    print(f"System B: {OLD_BASE_MODEL} (OLD) + BM25 hybrid")
+    sys_b    = HybridRetriever(OLD_BASE_MODEL, docs)
     ranked_b = [sys_b.search(q, K) for q in queries]
-    results["B (base+hybrid)"] = compute_scores(ranked_b, gt_indices)
-    print(f"  결과: {results['B (base+hybrid)']}\n")
+    results["B (old+hybrid)"] = compute_scores(ranked_b, gt_indices)
+    print(f"  결과: {results['B (old+hybrid)']}\n")
 
-    # ── System C ─────────────────────────────────────────────────────────
+    # ── System C : NEW 베이스 + dense ────────────────────────────────────
     print("─" * 65)
-    print("System C: 파인튜닝 임베딩 + BM25 hybrid")
+    print(f"System C: {NEW_BASE_MODEL} (NEW) + dense only")
+    sys_c    = DenseRetriever(NEW_BASE_MODEL, docs)
+    ranked_c = [sys_c.search(q, K) for q in queries]
+    results["C (new+dense)"] = compute_scores(ranked_c, gt_indices)
+    print(f"  결과: {results['C (new+dense)']}\n")
+
+    # ── System D : NEW 베이스 + hybrid ───────────────────────────────────
+    print("─" * 65)
+    print(f"System D: {NEW_BASE_MODEL} (NEW) + BM25 hybrid")
+    sys_d    = HybridRetriever(NEW_BASE_MODEL, docs)
+    ranked_d = [sys_d.search(q, K) for q in queries]
+    results["D (new+hybrid)"] = compute_scores(ranked_d, gt_indices)
+    print(f"  결과: {results['D (new+hybrid)']}\n")
+
+    # ── System E : NEW 파인튜닝 + hybrid ─────────────────────────────────
+    print("─" * 65)
+    print("System E: NEW 파인튜닝 임베딩 + BM25 hybrid  ← 현재 시스템")
     if os.path.exists(FINETUNED_MODEL):
-        sys_c = HybridRetriever(FINETUNED_MODEL, docs)
+        sys_e = HybridRetriever(FINETUNED_MODEL, docs)
         print(f"  파인튜닝 모델 사용: {FINETUNED_MODEL}")
     else:
         print(f"  ⚠️  파인튜닝 모델 없음 ({FINETUNED_MODEL})")
-        print("  → 베이스 모델로 대체 (System B 와 동일 결과 예상)")
-        sys_c = sys_b  # 인코딩 재계산 없이 재사용
-    ranked_c = [sys_c.search(q, K) for q in queries]
-    results["C (finetuned+hybrid)"] = compute_scores(ranked_c, gt_indices)
-    print(f"  결과: {results['C (finetuned+hybrid)']}\n")
+        print("  → NEW 베이스 모델로 대체 (System D 와 동일 결과 예상)")
+        sys_e = sys_d
+    ranked_e = [sys_e.search(q, K) for q in queries]
+    results["E (finetuned+hybrid)"] = compute_scores(ranked_e, gt_indices)
+    print(f"  결과: {results['E (finetuned+hybrid)']}\n")
 
-    # ── System D ─────────────────────────────────────────────────────────
+    # ── System F : System E + cross-encoder reranker ──────────────────────
     print("─" * 65)
-    print("System D: System C + cross-encoder reranker")
-    sys_d    = RerankRetriever(sys_c, docs, CROSS_ENCODER_MODEL)
-    ranked_d = [sys_d.search(q, K) for q in queries]
-    results["D (C+reranker)"] = compute_scores(ranked_d, gt_indices)
-    print(f"  결과: {results['D (C+reranker)']}\n")
+    print("System F: System E + cross-encoder reranker")
+    sys_f    = RerankRetriever(sys_e, docs, CROSS_ENCODER_MODEL)
+    ranked_f = [sys_f.search(q, K) for q in queries]
+    results["F (E+reranker)"] = compute_scores(ranked_f, gt_indices)
+    print(f"  결과: {results['F (E+reranker)']}\n")
 
     # ── 최종 비교 테이블 ─────────────────────────────────────────────────
-    print("\n" + "=" * 65)
+    print("\n" + "=" * 70)
     print(f"📊 시스템 비교  [TEST split — {QA_PATH.name}]")
-    print("=" * 65)
-    print(f"{'시스템':<30} {f'Recall@{K}':>10} {'MRR':>10} {f'NDCG@{K}':>10}")
-    print("-" * 65)
+    print("=" * 70)
+    print(f"{'시스템':<35} {f'Recall@{K}':>10} {'MRR':>10} {f'NDCG@{K}':>10}")
+    print("-" * 70)
+    separators = {"C (new+dense)": "── NEW 모델 ─────────────────────────────────────────────────────"}
     for name, m in results.items():
-        print(f"{name:<30} {m[f'Recall@{K}']:>10.4f} {m['MRR']:>10.4f} {m[f'NDCG@{K}']:>10.4f}")
-    print("=" * 65)
+        if name in separators:
+            print(separators[name])
+        print(f"{name:<35} {m[f'Recall@{K}']:>10.4f} {m['MRR']:>10.4f} {m[f'NDCG@{K}']:>10.4f}")
+    print("=" * 70)
     print(f"평가 QA: {len(queries)}개 | 코퍼스: {len(corpus)}개 | K={K} | α={ALPHA}")
+    print(f"OLD: {OLD_BASE_MODEL}")
+    print(f"NEW: {NEW_BASE_MODEL}")
     print(f"Corpus split: TEST (qa_test_2025.jsonl, 2025년 공지 기반 독립 생성)")
 
 

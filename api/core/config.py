@@ -7,7 +7,7 @@ _BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 EMBED_MODEL_PATH    = os.path.join(_BASE_DIR, "models", "embed_finetuned")
 SUMMARY_MODEL_PATH  = os.path.join(_BASE_DIR, "models", "summary_finetuned")
 CLASSIFY_MODEL_PATH = os.path.join(_BASE_DIR, "models", "classify_finetuned")
-BASE_MODEL_EMBED    = "jhgan/ko-sroberta-multitask"
+BASE_MODEL_EMBED    = "BM-K/KoSimCSE-roberta-multitask"
 CHROMA_DB_PATH      = os.path.join(_BASE_DIR, "chroma_db")
 NOTICES_CACHE_PATH  = os.path.join(_BASE_DIR, "data", "2026_notice.json")
 

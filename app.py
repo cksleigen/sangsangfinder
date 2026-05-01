@@ -2,7 +2,7 @@
 # app.py — 상상파인더 (온보딩 → 사이드바 + 챗봇/추천게시물)
 # ============================================================
 
-import os, re, time, json, hashlib, warnings, logging
+import os, re, time, json, warnings, logging
 # suppress chromadb 0.6.3 telemetry bug noise before any chromadb import
 logging.getLogger("chromadb.telemetry").setLevel(logging.CRITICAL)
 logging.getLogger("chromadb.telemetry.product").setLevel(logging.CRITICAL)
@@ -10,9 +10,18 @@ logging.getLogger("chromadb.telemetry.posthog").setLevel(logging.CRITICAL)
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse, urlencode, parse_qs, urlunparse
-from datetime import datetime
-
 from crawling.crawler import get_post_content  # noqa: E402  (중복 구현 제거)
+from api.core.config import (
+    CHROMA_DB_PATH, NOTICES_CACHE_PATH,
+    BOARD_LIST_URL, HEADERS, TARGET_YEAR, CATEGORIES, CATEGORY_PREFIX, CATEGORY_KEYWORDS,
+    CATEGORY_PATTERN as _CATEGORY_PATTERN, SUFFIX_PATTERN as _SUFFIX_PATTERN,
+)
+from api.core.models import (
+    get_embed_model, get_summary_pipeline, get_classifier, get_chroma,
+    classify_notice, load_notices_cache, index_notices,
+)
+from api.services.search_service import hybrid_search, generate_llm_reply, invalidate_bm25_cache
+from api.services.recommend_service import recommend_notices, summarize_notice
 
 import streamlit as st
 
@@ -21,90 +30,7 @@ warnings.filterwarnings("ignore")
 # ── 경로 설정 (프로젝트 루트 기준 상대경로) ───────────────────────────
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-EMBED_MODEL_PATH    = os.path.join(_BASE_DIR, "models", "embed_finetuned")
-SUMMARY_MODEL_PATH  = os.path.join(_BASE_DIR, "models", "summary_finetuned")
-CLASSIFY_MODEL_PATH = os.path.join(_BASE_DIR, "models", "classify_finetuned")
-BASE_MODEL_EMBED    = "jhgan/ko-sroberta-multitask"
-CHROMA_DB_PATH      = os.path.join(_BASE_DIR, "chroma_db")
-NOTICES_CACHE_PATH  = os.path.join(_BASE_DIR, "data", "2026_notice.json")
-PROFILE_CACHE_PATH  = os.path.join(_BASE_DIR, "data", "profile_cache.json")
-GEMINI_API_KEY      = os.getenv("GEMINI_API_KEY")  # .env 파일에 설정 필요
-
-BOARD_LIST_URL = "https://www.hansung.ac.kr/bbs/hansung/2127/artclList.do"
-HEADERS        = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-TARGET_YEAR    = str(datetime.now().year)
-
-CATEGORIES = ["취업/채용", "인턴십", "장학금", "학자금/근로장학", "학사행정",
-              "창업", "국제교류", "교육/특강", "비교과", "공모전/경진대회",
-              "봉사/서포터즈", "기숙사/생활관", "ROTC", "기타"]
-
-# 1단계: 제목 prefix → 카테고리 직매핑
-CATEGORY_PREFIX = {
-    "채용정보":    "취업/채용",
-    "강소기업채용": "취업/채용",
-    "인턴쉽":     "인턴십",
-    "교외장학금":  "장학금",
-    "국가장학금":  "장학금",
-    "학자금대출":  "학자금/근로장학",
-    "국가근로":    "학자금/근로장학",
-    "면학근로":    "학자금/근로장학",
-    "공모전":     "공모전/경진대회",
-    "정보":       "공모전/경진대회",
-}
-
-# 2단계: 제목 → 본문 순 키워드 매칭
-CATEGORY_KEYWORDS = {
-    "ROTC":           ["ROTC", "학군사관", "학군단", "현역병 모집", "현역병모집", "예비군", "전문사관",
-                      "재병역판정검사"],
-    "기숙사/생활관":   ["기숙사", "생활관", "상상빌리지", "우촌학사", "임대기숙사", "사감",
-                      "입사생 선발", "대학생주택", "학사관"],
-    "비교과":         ["비교과", "동아리", "D-School", "포럼", "대동제", "영상제", "입학식",
-                      "HS CREW", "상상파크", "라이프 디자인", "문화탐방", "만우절", "오찬 소통",
-                      "Lunch with", "천원의 아침밥", "ESG", "진로집단상담", "리더십 탐험",
-                      "학생축제", "문화제", "페스티벌", "소모임",
-                      "디즈니 프로그램", "디즈니프로그램", "FSU-Disney", "Disney",
-                      "새내기 새로배움터", "새로배움터", "총학생회",
-                      "사진전", "영상·사진전", "진로 설명회", "트랙 진로"],
-    "취업/채용":      ["채용", "신입", "공채", "취업", "채용박람회", "취업박람회", "모집공고", "직무", "채용연계", "일반채용", "추천채용"],
-    "인턴십":         ["인턴", "인턴십", "일경험", "체험형", "현장실습", "IPP"],
-    "장학금":         ["장학", "장학생", "장학재단", "장학금", "기부장학", "장학사업", "스칼라십", "장학지원"],
-    "학자금/근로장학": ["학자금대출", "학자금", "이자지원", "국가근로", "면학근로", "근로장학", "대출이자",
-                      "등록금 납부", "등록금 분할", "학기초과자 등록금"],
-    "학사행정":       ["수강신청", "수강정정", "졸업", "휴학", "복학", "학점", "트랙변경", "성적", "폐강", "복수전공", "부전공", "휴복학",
-                      "재입학", "연계전공", "Micro Degree", "MD과정", "교양영어", "이수신청",
-                      "트랙선택", "계절학기", "수업평가", "학위취득유예", "수강포기", "서면신청", "서면 신청",
-                      "교차전부", "교차 전부", "편입생", "전부(과)", "학위수여식", "학사학위취득",
-                      "오리엔테이션", "반편성고사", "합격자 공고", "합격자공고", "합격자 발표", "합격자발표",
-                      "선발 결과", "선발결과", "이수 면제", "이수면제", "수업운영 안내", "출결",
-                      "중간고사", "기말고사", "전공과목 변경", "전공변경", "다전공 신청",
-                      "학석사연계", "합격자 공지", "합격자공지",
-                      "학사경고", "자기설계전공", "교양필수", "상상력이노베이터"],
-    "창업":           ["창업", "창업동아리", "창업지원", "창업멘토링", "스타트업", "아이디어톤", "입주기업", "예비창업",
-                      "학생 CEO", "CEO 발굴"],
-    "국제교류":       ["교환학생", "어학연수", "파견", "글로벌버디", "국제교류", "해외", "어학", "글로컬",
-                      "글로벌 튜터링", "글로벌 Conversation", "글로벌 컨버세이션", "글로벌 문화 소통",
-                      "단기연수", "단기 연수", "K-Move", "WEST 연수", "한·미대학생",
-                      "글로벌 동행", "글로벌동행"],
-    "교육/특강":      ["특강", "교육생", "아카데미", "KDT", "K-디지털", "강좌", "교육과정", "역량강화",
-                      "평생교육", "RISE", "마이크로디그리", "TOPCIT", "연구방법론",
-                      "초청강연", "특별강연", "핵심역량진단", "HS-CESA", "K-CESA", "UICA", "K-NSSE",
-                      "폭력예방교육", "필수교육", "전문과정", "SW마에스트로", "코딩 캠프", "코딩캠프",
-                      "신규 교과목", "재정데이터", "직업흥미검사", "심리증진",
-                      "연구윤리", "워크숍", "진로지도시스템", "진로 캠프", "진로캠프",
-                      "심폐소생술", "저작권", "청년인생설계", "기초역량 가이드", "미디어 클래스",
-                      "과학살롱", "기초학문"],
-    "공모전/경진대회": ["공모전", "경진대회", "챌린지", "해커톤", "대회", "공모", "문학상"],
-    "봉사/서포터즈":  ["서포터즈", "서포터스", "봉사", "멘토", "봉사자", "기자단", "자원활동", "멘토단", "멘토링", "자원봉사",
-                      "홍보대사", "하랑", "소통-e", "앰버서더", "방송국 HBS", "홍보단",
-                      "수습기자", "운영자문위원", "모니터링단", "자문단",
-                      "바로알림단", "기획단", "체험단", "발굴단", "순찰대", "제작단",
-                      "자원지도자", "볼런톤", "청백리포터", "Friends of Korea"],
-}
-
-_CATEGORY_PATTERN = re.compile(
-    r"^(한성공지|국제|학사|비교과|장학|취업|진로|창업|기타|현장실습|교육프로그램|행사|일반공지)\s*"
-)
-_SUFFIX_PATTERN = re.compile(r"\s*(새글|hot|NEW)\s*$", re.IGNORECASE)
+PROFILE_CACHE_PATH = os.path.join(_BASE_DIR, "data", "profile_cache.json")
 
 os.makedirs(os.path.join(_BASE_DIR, "data"), exist_ok=True)
 os.makedirs(CHROMA_DB_PATH, exist_ok=True)
@@ -163,27 +89,6 @@ def clean_title(raw: str) -> str:
     return title
 
 
-def infer_category(title: str, body: str) -> str:
-    # 1단계: prefix 직매핑
-    for prefix, cat in CATEGORY_PREFIX.items():
-        if title.startswith(prefix):
-            return cat
-
-    # 2단계: 제목 키워드 우선
-    for cat, keywords in CATEGORY_KEYWORDS.items():
-        if any(kw in title for kw in keywords):
-            return cat
-
-    # 3단계: 본문 키워드 fallback
-    for cat, keywords in CATEGORY_KEYWORDS.items():
-        if any(kw in body for kw in keywords):
-            return cat
-
-    return "기타"
-
-
-def tokenize_ko(text: str) -> list:
-    return re.findall(r"[\w가-힣]+", text.lower())
 
 
 # ============================================================
@@ -248,273 +153,6 @@ def crawl_all() -> list:
     return all_items
 
 
-def load_notices_cache() -> list:
-    if os.path.exists(NOTICES_CACHE_PATH):
-        with open(NOTICES_CACHE_PATH, encoding="utf-8") as f:
-            return json.load(f)
-    return []
-
-
-# ============================================================
-# 모델 로더
-# ============================================================
-
-@st.cache_resource
-def get_embed_model():
-    path = EMBED_MODEL_PATH if os.path.exists(EMBED_MODEL_PATH) else BASE_MODEL_EMBED
-    from sentence_transformers import SentenceTransformer
-    return SentenceTransformer(path, device="cpu")
-
-
-@st.cache_resource
-def get_summary_pipeline():
-    if not os.path.exists(SUMMARY_MODEL_PATH):
-        return None
-    from transformers import pipeline
-    return pipeline("summarization", model=SUMMARY_MODEL_PATH,
-                    tokenizer=SUMMARY_MODEL_PATH, max_new_tokens=128, device=-1)
-
-
-@st.cache_resource
-def get_classifier():
-    if not os.path.exists(CLASSIFY_MODEL_PATH):
-        return None, None
-    from transformers import pipeline
-    clf = pipeline("text-classification", model=CLASSIFY_MODEL_PATH,
-                   tokenizer=CLASSIFY_MODEL_PATH, device=-1)
-    label_map_path = f"{CLASSIFY_MODEL_PATH}/label_map.json"
-    label_map = {}
-    if os.path.exists(label_map_path):
-        with open(label_map_path) as f:
-            label_map = json.load(f)
-    return clf, label_map
-
-
-@st.cache_resource
-def get_chroma():
-    import chromadb
-    client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
-    return client.get_or_create_collection(
-        name="hansung_notices",
-        metadata={"hnsw:space": "cosine"}
-    )
-
-
-# ============================================================
-# 분류
-# ============================================================
-
-def classify_notice(title: str, body: str) -> str:
-    clf, label_map = get_classifier()
-    if clf is None:
-        return infer_category(title, body)
-    try:
-        result   = clf(f"{title} {body[:200]}", truncation=True)[0]
-        label_id = result["label"].replace("LABEL_", "")
-        return label_map.get(label_id, "기타")
-    except Exception:
-        return infer_category(title, body)
-
-
-# ============================================================
-# ChromaDB 임베딩 & 저장
-# ============================================================
-
-def index_notices(notices: list):
-    model      = get_embed_model()
-    collection = get_chroma()
-    new_count  = update_count = 0
-    for item in notices:
-        doc_id    = hashlib.md5(item["url"].encode()).hexdigest()
-        body      = item.get("body", "")
-        # crawl_all()에서 이미 분류된 category 재사용; 없으면 fallback
-        category  = item.get("category") or classify_notice(item["title"], body)
-        text      = f"제목: {item['title']}\n\n{body}"
-        embedding = model.encode(text).tolist()
-        existing  = collection.get(ids=[doc_id])["ids"]
-        if existing:
-            collection.update(
-                ids=[doc_id], embeddings=[embedding], documents=[text],
-                metadatas=[{"title": item["title"], "url": item["url"],
-                            "date": item["date"], "category": category}]
-            )
-            update_count += 1
-        else:
-            collection.add(
-                ids=[doc_id], embeddings=[embedding], documents=[text],
-                metadatas=[{"title": item["title"], "url": item["url"],
-                            "date": item["date"], "category": category}]
-            )
-            new_count += 1
-
-
-# ============================================================
-# 하이브리드 검색
-# ============================================================
-
-@st.cache_data(ttl=600, show_spinner=False)
-def _build_bm25_index(category_filter: str):
-    from rank_bm25 import BM25Okapi
-    collection = get_chroma()
-    where      = {"category": category_filter} \
-                 if category_filter and category_filter != "전체" else None
-    all_data   = collection.get(include=["documents", "metadatas"], where=where)
-    documents  = all_data["documents"]
-    metadatas  = all_data["metadatas"]
-    ids        = all_data["ids"]
-    if not documents:
-        return None, [], [], []
-    tokenized_docs = [tokenize_ko(doc) for doc in documents]
-    bm25           = BM25Okapi(tokenized_docs)
-    return bm25, ids, documents, metadatas
-
-
-def hybrid_search(query: str, top_k: int = 5, alpha: float = 0.7,
-                  category_filter: str = None) -> list:
-    model      = get_embed_model()
-    collection = get_chroma()
-    cat_key    = category_filter if category_filter and category_filter != "전체" else "전체"
-    where      = {"category": category_filter} \
-                 if category_filter and category_filter != "전체" else None
-    bm25, ids, documents, metadatas = _build_bm25_index(cat_key)
-    if bm25 is None:
-        return []
-    q_emb     = model.encode(query).tolist()
-    n_results = min(top_k * 2, len(documents))
-    vr        = collection.query(
-        query_embeddings=[q_emb], n_results=n_results,
-        include=["metadatas", "distances"], where=where,
-    )
-    vector_scores = {}
-    raw_dist = vr["distances"][0]
-    if raw_dist:
-        max_sim = 1 - min(raw_dist)
-        min_sim = 1 - max(raw_dist)
-        for vid, dist in zip(vr["ids"][0], raw_dist):
-            sim  = 1 - dist
-            norm = (sim - min_sim) / (max_sim - min_sim + 1e-9)
-            vector_scores[vid] = norm
-    bm25_raw    = bm25.get_scores(tokenize_ko(query))
-    bm25_max    = max(bm25_raw) if max(bm25_raw) > 0 else 1
-    bm25_scores = {did: s / bm25_max for did, s in zip(ids, bm25_raw)}
-    all_ids = set(vector_scores) | set(bm25_scores)
-    final   = {
-        did: alpha * vector_scores.get(did, 0) + (1 - alpha) * bm25_scores.get(did, 0)
-        for did in all_ids
-    }
-    top_ids  = sorted(final, key=lambda x: final[x], reverse=True)[:top_k]
-    meta_map = dict(zip(ids, metadatas))
-    return [
-        {**meta_map[did], "score": round(final[did], 4)}
-        for did in top_ids if did in meta_map
-    ]
-
-
-# ============================================================
-# 요약
-# ============================================================
-
-def summarize_notice(title: str, body: str) -> str:
-    pipe = get_summary_pipeline()
-    if pipe:
-        try:
-            result = pipe(f"제목: {title}\n\n{body[:512]}", truncation=True)
-            return result[0]["summary_text"]
-        except Exception:
-            pass
-    sentences = re.split(r"[.!?。]\s*", body)
-    sentences = [s.strip() for s in sentences if len(s.strip()) > 10]
-    return ". ".join(sentences[:2]) + "." if sentences else body[:150]
-
-
-# ============================================================
-# Gemini LLM 답변 생성
-# ============================================================
-
-def get_gemini_model(api_key: str):
-    try:
-        import google.generativeai as genai
-        genai.configure(api_key=api_key)
-        return genai.GenerativeModel("gemini-2.5-flash")
-    except Exception as e:
-        st.error(f"[Gemini 모델 로드 오류] {e}")
-        return None
-
-
-def generate_llm_reply(user_query: str, results: list, profile: dict, is_first: bool = False) -> str:
-    """검색된 공지를 컨텍스트로 Gemini에게 자연어 답변 생성 요청"""
-    model = get_gemini_model(GEMINI_API_KEY) if GEMINI_API_KEY else None
-    if not model:
-        if results:
-            return f"총 {len(results)}개의 관련 공지를 찾았습니다."
-        return "관련 공지를 찾지 못했습니다. GEMINI_API_KEY를 설정하거나 캐시를 먼저 불러와 주세요."
-
-    if not results:
-        return "관련 공지를 찾지 못했습니다. 다른 키워드로 검색해보세요."
-
-    # 공지 본문 포함한 컨텍스트 구성 (top 3개)
-    body_map = {n["url"]: n.get("body", "") for n in (st.session_state.notices or load_notices_cache())}
-    context_parts = []
-    for i, r in enumerate(results[:3], 1):
-        body = body_map.get(r["url"], "")[:800]
-        context_parts.append(
-            f"[공지 {i}]\n제목: {r['title']}\n날짜: {r['date']}\n내용: {body if body else '(본문 없음)'}"
-        )
-    context = "\n\n".join(context_parts)
-
-    name = profile.get('name', '')
-    greeting = f"{name}님, 안녕하세요. " if is_first else ""
-
-    prompt = f"""당신은 한성대학교 공지사항 안내 도우미입니다.
-
-아래 공지사항 본문을 바탕으로 사용자 질문에 직접적이고 구체적으로 답변하세요.
-- 날짜, 금액, 조건 등 구체적인 정보가 있으면 반드시 포함하세요.
-- "공지를 참고하세요" 같은 말은 절대 하지 마세요. 정보를 직접 알려주세요.
-- 2~3문장으로 간결하게 답변하세요.
-- 답변 시작: "{greeting}"{"(인사 없이 바로 답변)" if not is_first else ""}
-
-[공지 본문]
-{context}
-
-[질문]
-{user_query}"""
-
-    try:
-        response = model.generate_content(prompt)
-        return response.text.strip()
-    except Exception as e:
-        return f"[Gemini 오류] {e}"
-
-
-# ============================================================
-# 콘텐츠 기반 추천
-# ============================================================
-
-def recommend_notices(user_profile: dict, top_k: int = 5) -> list:
-    model      = get_embed_model()
-    collection = get_chroma()
-    interests_str = ", ".join(user_profile.get("interests", []))
-    query = (
-        f"{user_profile.get('college', '')} "
-        f"{user_profile.get('track', '')} "
-        f"{user_profile.get('grade', '')} 학생 관심사: {interests_str}"
-    )
-    n_docs = collection.count()
-    if n_docs == 0:
-        return []
-    results = collection.query(
-        query_embeddings=[model.encode(query).tolist()],
-        n_results=min(top_k, n_docs),
-        include=["metadatas", "distances"],
-    )
-    items = []
-    for meta, dist in zip(results["metadatas"][0], results["distances"][0]):
-        score = round(1 - dist, 4)
-        if meta.get("category") in user_profile.get("interests", []):
-            score = min(score + 0.05, 1.0)
-        items.append({**meta, "score": score})
-    items.sort(key=lambda x: x["score"], reverse=True)
-    return items
 
 
 # ============================================================
@@ -1305,7 +943,7 @@ def main():
             # ChromaDB에 이미 데이터가 있으면 index_notices 생략 (속도 최적화)
             if get_chroma().count() == 0:
                 index_notices(notices)
-                _build_bm25_index.clear()
+                invalidate_bm25_cache()
 
     render_sidebar(profile)
 

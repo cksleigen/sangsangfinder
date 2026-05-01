@@ -56,7 +56,7 @@ BOARD_LIST_URL     = "https://www.hansung.ac.kr/bbs/hansung/2127/artclList.do"
 HEADERS            = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 TARGET_YEAR        = str(datetime.now().year)          # ✅ fix #4: 연도 자동
 
-BASE_MODEL_EMBED   = "jhgan/ko-sroberta-multitask"
+BASE_MODEL_EMBED   = "BM-K/KoSimCSE-roberta-multitask"
 BASE_MODEL_CLS     = "klue/bert-base"
 
 EMBED_MODEL_PATH    = os.path.join(_ROOT, "models", "embed_finetuned")

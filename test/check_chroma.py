@@ -117,10 +117,10 @@ def check_embedding_dim(col):
         print("[FAIL] 임베딩 벡터를 가져올 수 없습니다.")
         return
     dim = len(embeddings[0])
-    # jhgan/ko-sroberta-multitask 기본 출력 차원: 768
+    # BM-K/KoSimCSE-roberta-multitask 기본 출력 차원: 768
     expected = 768
     if dim == expected:
-        print(f"[OK]   임베딩 차원: {dim} (jhgan/ko-sroberta-multitask 기본값과 일치)")
+        print(f"[OK]   임베딩 차원: {dim} (BM-K/KoSimCSE-roberta-multitask 기본값과 일치)")
     else:
         print(f"[WARN] 임베딩 차원: {dim} (기대값 {expected}와 다름 — 파인튜닝 모델 사용 중일 수 있음)")
 
@@ -163,7 +163,7 @@ def check_query(col):
     section("8. 벡터 검색 테스트")
     try:
         from sentence_transformers import SentenceTransformer
-        base_model = "jhgan/ko-sroberta-multitask"
+        base_model = "BM-K/KoSimCSE-roberta-multitask"
         embed_model_path = os.path.join(_BASE_DIR, "models", "embed_finetuned")
         model_path = embed_model_path if os.path.exists(embed_model_path) else base_model
         print(f"       임베딩 모델 로드: {model_path}")
