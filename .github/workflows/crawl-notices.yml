@@ -1,0 +1,31 @@
+name: Crawl Hansung notices
+
+on:
+  schedule:
+    # KST Mon-Fri 09:00-17:00 == UTC Mon-Fri 00:00-08:00
+    - cron: "0 0-8 * * 1-5"
+  workflow_dispatch:
+
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: requirements-crawl.txt
+
+      - name: Install crawler dependencies
+        run: python -m pip install -r requirements-crawl.txt
+
+      - name: Crawl and save to Supabase
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: python crawling/auto_crawler.py --storage supabase --init-db --no-index --max-pages 5

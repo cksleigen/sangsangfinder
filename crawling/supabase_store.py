@@ -1,0 +1,181 @@
+"""
+Supabase/Postgres storage for crawled Hansung notices.
+
+Set SUPABASE_DB_URL to a Supabase Postgres connection string, for example
+the Transaction pooler URI with sslmode=require.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+from datetime import date, datetime
+from typing import Any
+
+import psycopg
+from psycopg.types.json import Jsonb
+
+SOURCE = "hansung"
+DB_URL_ENV = "SUPABASE_DB_URL"
+
+
+CREATE_NOTICES_SQL = """
+create table if not exists notices (
+    id bigserial primary key,
+    source text not null default 'hansung',
+    notice_id text,
+    title text not null,
+    url text not null unique,
+    posted_at date,
+    posted_date_text text,
+    category text,
+    body text,
+    views integer,
+    raw jsonb not null default '{}'::jsonb,
+    crawled_at timestamptz not null default now(),
+    updated_at timestamptz not null default now()
+);
+
+create index if not exists idx_notices_source_posted_at
+    on notices (source, posted_at desc);
+
+create index if not exists idx_notices_category
+    on notices (category);
+"""
+
+
+UPSERT_NOTICE_SQL = """
+insert into notices (
+    source,
+    notice_id,
+    title,
+    url,
+    posted_at,
+    posted_date_text,
+    category,
+    body,
+    views,
+    raw,
+    crawled_at,
+    updated_at
+)
+values (
+    %(source)s,
+    %(notice_id)s,
+    %(title)s,
+    %(url)s,
+    %(posted_at)s,
+    %(posted_date_text)s,
+    %(category)s,
+    %(body)s,
+    %(views)s,
+    %(raw)s,
+    now(),
+    now()
+)
+on conflict (url) do update set
+    notice_id = excluded.notice_id,
+    title = excluded.title,
+    posted_at = excluded.posted_at,
+    posted_date_text = excluded.posted_date_text,
+    category = excluded.category,
+    body = excluded.body,
+    views = excluded.views,
+    raw = excluded.raw,
+    updated_at = now();
+"""
+
+
+def _db_url() -> str:
+    value = os.getenv(DB_URL_ENV) or os.getenv("DATABASE_URL")
+    if not value:
+        raise RuntimeError(
+            f"{DB_URL_ENV} is required. Add it to GitHub Actions secrets or your local .env."
+        )
+    return value
+
+
+def _connect() -> psycopg.Connection:
+    return psycopg.connect(_db_url(), autocommit=False)
+
+
+def ensure_schema() -> None:
+    """Create the notices table and indexes if they do not exist."""
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(CREATE_NOTICES_SQL)
+        conn.commit()
+
+
+def load_seen_urls(year: str | int) -> set[str]:
+    """Load URLs already stored for the target year."""
+    year_text = str(year)
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                select url
+                from notices
+                where source = %s
+                  and (
+                    extract(year from posted_at)::text = %s
+                    or posted_date_text like %s
+                  )
+                """,
+                (SOURCE, year_text, f"{year_text}%"),
+            )
+            return {row[0] for row in cur.fetchall()}
+
+
+def upsert_notices(items: list[dict[str, Any]]) -> int:
+    """Insert or update notices by unique URL."""
+    if not items:
+        return 0
+
+    rows = [_to_row(item) for item in items]
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.executemany(UPSERT_NOTICE_SQL, rows)
+        conn.commit()
+    return len(rows)
+
+
+def _to_row(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "source": SOURCE,
+        "notice_id": _extract_notice_id(item.get("url", "")),
+        "title": item.get("title") or "",
+        "url": item.get("url") or "",
+        "posted_at": _parse_date(item.get("date")),
+        "posted_date_text": item.get("date"),
+        "category": item.get("category"),
+        "body": item.get("body"),
+        "views": _parse_int(item.get("views")),
+        "raw": Jsonb(item),
+    }
+
+
+def _parse_date(value: Any) -> date | None:
+    if not value:
+        return None
+    text = str(value).strip()
+    for fmt in ("%Y.%m.%d", "%Y-%m-%d", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(text, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _parse_int(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(str(value).replace(",", ""))
+    except ValueError:
+        return None
+
+
+def _extract_notice_id(url: str) -> str | None:
+    match = re.search(r"/(\d+)/artclView\.do", url)
+    return match.group(1) if match else None
