@@ -146,18 +146,30 @@ def upsert_notices(items: list[dict[str, Any]]) -> int:
 
 
 def _to_row(item: dict[str, Any]) -> dict[str, Any]:
+    clean_item = _clean_for_postgres(item)
     return {
         "source": SOURCE,
-        "notice_id": _extract_notice_id(item.get("url", "")),
-        "title": item.get("title") or "",
-        "url": item.get("url") or "",
-        "posted_at": _parse_date(item.get("date")),
-        "posted_date_text": item.get("date"),
-        "category": item.get("category"),
-        "body": item.get("body"),
-        "views": _parse_int(item.get("views")),
-        "raw": Jsonb(item),
+        "notice_id": _extract_notice_id(clean_item.get("url", "")),
+        "title": clean_item.get("title") or "",
+        "url": clean_item.get("url") or "",
+        "posted_at": _parse_date(clean_item.get("date")),
+        "posted_date_text": clean_item.get("date"),
+        "category": clean_item.get("category"),
+        "body": clean_item.get("body"),
+        "views": _parse_int(clean_item.get("views")),
+        "raw": Jsonb(clean_item),
     }
+
+
+def _clean_for_postgres(value: Any) -> Any:
+    """Postgres text/jsonb values cannot contain literal NUL bytes."""
+    if isinstance(value, str):
+        return value.replace("\x00", "")
+    if isinstance(value, list):
+        return [_clean_for_postgres(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _clean_for_postgres(item) for key, item in value.items()}
+    return value
 
 
 def _parse_date(value: Any) -> date | None:
