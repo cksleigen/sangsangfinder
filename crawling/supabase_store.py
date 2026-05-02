@@ -96,7 +96,12 @@ def _db_url() -> str:
 
 
 def _connect() -> psycopg.Connection:
-    return psycopg.connect(_db_url(), autocommit=False)
+    return psycopg.connect(
+        _db_url(),
+        autocommit=False,
+        connect_timeout=10,
+        prepare_threshold=None,
+    )
 
 
 def ensure_schema() -> None:

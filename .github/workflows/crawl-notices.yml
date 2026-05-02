@@ -42,4 +42,4 @@ jobs:
       - name: Crawl and save to Supabase
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
-        run: python crawling/auto_crawler.py --storage supabase --init-db --no-index --max-pages 5
+        run: python crawling/auto_crawler.py --storage supabase --init-db --no-index --max-pages 2
