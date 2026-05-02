@@ -25,6 +25,20 @@ jobs:
       - name: Install crawler dependencies
         run: python -m pip install -r requirements-crawl.txt
 
+      - name: Validate Supabase secret
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          if [ -z "$SUPABASE_DB_URL" ]; then
+            echo "::error::SUPABASE_DB_URL secret is empty or missing. Add it in Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+          if [[ "$SUPABASE_DB_URL" != postgresql://* && "$SUPABASE_DB_URL" != postgres://* ]]; then
+            echo "::error::SUPABASE_DB_URL must start with postgresql:// or postgres://"
+            exit 1
+          fi
+          echo "SUPABASE_DB_URL is configured."
+
       - name: Crawl and save to Supabase
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
