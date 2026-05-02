@@ -26,3 +26,12 @@ SUPABASE_DB_URL="postgresql://..." python crawling/auto_crawler.py --storage sup
 ```
 
 테이블만 수동으로 만들고 싶으면 `crawling/supabase_schema.sql`을 Supabase SQL Editor에서 실행해도 된다.
+
+기존 JSON 파일을 Supabase로 가져오기:
+
+```bash
+pip install -r requirements-crawl.txt
+SUPABASE_DB_URL="postgresql://..." python scripts/import_json_to_supabase.py data/data_2025.json data/data_2026.json
+```
+
+같은 `url`은 `upsert`로 처리되므로 같은 파일을 다시 실행해도 중복 저장되지 않는다.
