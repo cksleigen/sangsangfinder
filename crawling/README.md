@@ -17,7 +17,8 @@ GitHub Actions가 평일 09:00-17:00(KST)에 1시간 간격으로 실행되고, 
 SUPABASE_DB_URL
 ```
 
-Supabase Dashboard의 Project Settings > Database에서 Postgres connection string을 복사해 넣는다. GitHub Actions에서는 보통 pooler URI에 `sslmode=require`가 붙은 값을 사용하면 된다.
+Supabase에서 DB에 들어간 다음, 상단 DB 이름 옆에 있는 'connect' 연두색 버튼 클릭. Direct > Transaction pooler > Connection string 복사하고 비밀번호 DB 생성 시 정한 거로 변경
+GitHub Actions에서는 보통 pooler URI 뒤에 `sslmode=require`가 붙은 값을 사용
 
 로컬 테스트:
 

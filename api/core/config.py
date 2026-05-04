@@ -9,7 +9,8 @@ SUMMARY_MODEL_PATH  = os.path.join(_BASE_DIR, "models", "summary_finetuned")
 CLASSIFY_MODEL_PATH = os.path.join(_BASE_DIR, "models", "classify_finetuned")
 BASE_MODEL_EMBED    = "BM-K/KoSimCSE-roberta-multitask"
 CHROMA_DB_PATH      = os.path.join(_BASE_DIR, "chroma_db")
-NOTICES_CACHE_PATH  = os.path.join(_BASE_DIR, "data", "2026_notice.json")
+INDEX_MANIFEST_PATH = os.path.join(CHROMA_DB_PATH, "index_manifest.json")
+NOTICES_CACHE_PATH  = os.path.join(_BASE_DIR, "data", "data_2026.json")
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
@@ -17,8 +18,8 @@ BOARD_LIST_URL = "https://www.hansung.ac.kr/bbs/hansung/2127/artclList.do"
 HEADERS        = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 TARGET_YEAR    = str(datetime.now().year)
 
-CHUNK_SIZE    = 400
-CHUNK_OVERLAP = 50
+CHUNK_SIZE    = 600
+CHUNK_OVERLAP = 80
 
 CATEGORIES = [
     "취업/채용", "인턴십", "장학금", "학자금/근로장학", "학사행정",
