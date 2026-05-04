@@ -16,14 +16,20 @@ import json
 import math
 import os
 import re
+import sys
 from pathlib import Path
 
 import numpy as np
 from rank_bm25 import BM25Okapi
-from sentence_transformers import SentenceTransformer, CrossEncoder
+from sentence_transformers import CrossEncoder
 
 # ── 경로 ─────────────────────────────────────────────────────────────────
 ROOT            = Path(__file__).parent.parent  # 프로젝트 루트
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from api.core.models import SimCSEEmbedder  # noqa: E402
+
 QA_DATA_DIR     = ROOT / "qa_dataset_generation" / "data"
 CORPUS_PATH     = QA_DATA_DIR / "test_notices_2025.json"
 QA_PATH         = QA_DATA_DIR / "qa_test_2025.jsonl"
@@ -40,6 +46,16 @@ CROSS_ENCODER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 K            = 5    # Recall@K, NDCG@K
 RERANK_TOPN  = 20   # reranker 후보 수
 ALPHA        = 0.7  # hybrid: dense 가중치
+
+
+def load_embedder(model_path: str):
+    if model_path == NEW_BASE_MODEL or Path(model_path).name == "embed_finetuned":
+        print("  파이프라인: SimCSE CLS pooling")
+        return SimCSEEmbedder(model_path, device="cpu")
+
+    from sentence_transformers import SentenceTransformer
+    print("  파이프라인: sentence-transformers 기본 encode")
+    return SentenceTransformer(model_path, device="cpu")
 
 
 # ── 텍스트 포맷 (app.py 의 index_notices 와 동일) ────────────────────────
@@ -90,14 +106,14 @@ class DenseRetriever:
 
     def __init__(self, model_path: str, docs: list[str]):
         print(f"  모델 로딩: {model_path}")
-        self.model = SentenceTransformer(model_path, device="cpu")
+        self.model = load_embedder(model_path)
         print("  문서 인코딩 중...", flush=True)
-        embs = self.model.encode(docs, convert_to_numpy=True, show_progress_bar=True)
+        embs = self.model.encode(docs, show_progress_bar=True)
         norms = np.linalg.norm(embs, axis=1, keepdims=True) + 1e-9
         self.doc_embs = embs / norms
 
     def search(self, query: str, k: int) -> list[int]:
-        q = self.model.encode([query], convert_to_numpy=True)
+        q = self.model.encode([query])
         q = q / (np.linalg.norm(q, axis=1, keepdims=True) + 1e-9)
         sims = (q @ self.doc_embs.T)[0]
         return np.argsort(-sims)[:k].tolist()
@@ -109,16 +125,16 @@ class HybridRetriever:
     def __init__(self, model_path: str, docs: list[str], alpha: float = ALPHA):
         self.alpha = alpha
         print(f"  모델 로딩: {model_path}")
-        self.model = SentenceTransformer(model_path, device="cpu")
+        self.model = load_embedder(model_path)
         print("  문서 인코딩 중...", flush=True)
-        embs = self.model.encode(docs, convert_to_numpy=True, show_progress_bar=True)
+        embs = self.model.encode(docs, show_progress_bar=True)
         norms = np.linalg.norm(embs, axis=1, keepdims=True) + 1e-9
         self.doc_embs = embs / norms
         print("  BM25 인덱스 구축 중...", flush=True)
         self.bm25 = BM25Okapi([tokenize_ko(d) for d in docs])
 
     def _scores(self, query: str) -> np.ndarray:
-        q = self.model.encode([query], convert_to_numpy=True)
+        q = self.model.encode([query])
         q = q / (np.linalg.norm(q, axis=1, keepdims=True) + 1e-9)
         dense = (q @ self.doc_embs.T)[0]
         d_min, d_max = dense.min(), dense.max()

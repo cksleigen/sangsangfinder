@@ -459,7 +459,7 @@ def evaluate_embedding(notices: list, k_list: list = None):
     베이스 모델 vs 파인튜닝 모델의 Recall@K, MRR 비교
     발표 자료의 정량 지표로 사용 가능
     """
-    from sentence_transformers import SentenceTransformer
+    from api.core.models import SimCSEEmbedder
     import numpy as np
 
     if k_list is None:
@@ -487,9 +487,10 @@ def evaluate_embedding(notices: list, k_list: list = None):
 
     for model_name, model_path in models_to_eval.items():
         print(f"\n📊 [{model_name}] 평가 중...")
-        model         = SentenceTransformer(model_path)
-        corpus_embs   = model.encode(corpus,  convert_to_numpy=True, show_progress_bar=True)
-        query_embs    = model.encode(queries, convert_to_numpy=True, show_progress_bar=True)
+        print("  파이프라인: SimCSE CLS pooling")
+        model         = SimCSEEmbedder(model_path)
+        corpus_embs   = model.encode(corpus,  show_progress_bar=True)
+        query_embs    = model.encode(queries, show_progress_bar=True)
 
         # 코사인 유사도 계산
         corpus_norm = corpus_embs / (np.linalg.norm(corpus_embs, axis=1, keepdims=True) + 1e-9)

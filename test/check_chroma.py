@@ -13,6 +13,9 @@ from collections import Counter, defaultdict
 import chromadb
 
 _BASE_DIR      = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # 프로젝트 루트
+if _BASE_DIR not in sys.path:
+    sys.path.insert(0, _BASE_DIR)
+
 CHROMA_DB_PATH = os.path.join(_BASE_DIR, "chroma_db")
 COLLECTION_NAME = "hansung_notices"
 REQUIRED_META_KEYS = {"title", "url", "date", "category"}
@@ -162,14 +165,16 @@ def check_duplicate_docs(col, count: int):
 def check_query(col):
     section("8. 벡터 검색 테스트")
     try:
-        from sentence_transformers import SentenceTransformer
-        base_model = "BM-K/KoSimCSE-roberta-multitask"
-        embed_model_path = os.path.join(_BASE_DIR, "models", "embed_finetuned")
-        model_path = embed_model_path if os.path.exists(embed_model_path) else base_model
-        print(f"       임베딩 모델 로드: {model_path}")
-        model = SentenceTransformer(model_path, device="cpu")
+        from api.core.models import (
+            EMBEDDING_PIPELINE_VERSION,
+            _embed_model_source,
+            get_embed_model,
+        )
+        print(f"       임베딩 모델 로드: {_embed_model_source()}")
+        print(f"       임베딩 파이프라인: {EMBEDDING_PIPELINE_VERSION}")
+        model = get_embed_model()
     except ImportError:
-        print("[SKIP] sentence_transformers 미설치 — 쿼리 테스트를 건너뜁니다.")
+        print("[SKIP] 운영 임베딩 모듈을 로드할 수 없어 쿼리 테스트를 건너뜁니다.")
         return
 
     queries = ["장학금 신청 기간", "취업박람회", "수강신청"]
