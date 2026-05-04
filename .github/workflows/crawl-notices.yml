@@ -2,9 +2,10 @@ name: Crawl Hansung notices
 
 on:
   schedule:
-    # KST Mon-Fri 09:17-17:17 == UTC Mon-Fri 00:17-08:17.
-    # Avoid minute 0 because GitHub Actions may delay or drop scheduled runs at the top of the hour.
-    - cron: "17 0-8 * * 1-5"
+    # KST Mon-Fri 09:17/32/47-17:17/32/47 == UTC Mon-Fri 00:17/32/47-08:17/32/47.
+    # GitHub Actions scheduled events are best-effort and can be delayed or dropped,
+    # so use backup ticks. The crawler writes with Supabase upserts, making repeats idempotent.
+    - cron: "17,32,47 0-8 * * 1-5"
   workflow_dispatch:
 
 jobs:
