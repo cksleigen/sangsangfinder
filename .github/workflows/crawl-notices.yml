@@ -2,8 +2,9 @@ name: Crawl Hansung notices
 
 on:
   schedule:
-    # KST Mon-Fri 09:00-17:00 == UTC Mon-Fri 00:00-08:00
-    - cron: "0 0-8 * * 1-5"
+    # KST Mon-Fri 09:17-17:17 == UTC Mon-Fri 00:17-08:17.
+    # Avoid minute 0 because GitHub Actions may delay or drop scheduled runs at the top of the hour.
+    - cron: "17 0-8 * * 1-5"
   workflow_dispatch:
 
 jobs:
