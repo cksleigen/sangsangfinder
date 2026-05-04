@@ -3,6 +3,7 @@
 # ============================================================
 
 import os, re, time, json, warnings, logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 # suppress chromadb 0.6.3 telemetry bug noise before any chromadb import
 logging.getLogger("chromadb.telemetry").setLevel(logging.CRITICAL)
 logging.getLogger("chromadb.telemetry.product").setLevel(logging.CRITICAL)
@@ -17,10 +18,10 @@ from api.core.config import (
     CATEGORY_PATTERN as _CATEGORY_PATTERN, SUFFIX_PATTERN as _SUFFIX_PATTERN,
 )
 from api.core.models import (
-    get_embed_model, get_summary_pipeline, get_classifier, get_chroma,
-    classify_notice, load_notices_cache, index_notices,
+    get_embed_model, get_summary_pipeline, get_classifier,
+    classify_notice, load_notices_cache,
 )
-from api.services.search_service import hybrid_search, generate_llm_reply, invalidate_bm25_cache
+from api.services.search_service import hybrid_search, generate_llm_reply
 from api.services.recommend_service import recommend_notices, summarize_notice
 
 import streamlit as st
@@ -940,10 +941,6 @@ def main():
         notices = load_notices_cache()
         if notices:
             st.session_state.notices = notices
-            # ChromaDB에 이미 데이터가 있으면 index_notices 생략 (속도 최적화)
-            if get_chroma().count() == 0:
-                index_notices(notices)
-                invalidate_bm25_cache()
 
     render_sidebar(profile)
 
