@@ -17,7 +17,7 @@ import streamlit as st
 
 # ── 경로 설정 ─────────────────────────────────────────────────
 _BASE_DIR            = os.path.dirname(os.path.abspath(__file__))
-TWO_TOWER_MODEL_PATH = os.path.join(_BASE_DIR, "models", "two_tower_model.pt")
+TWO_TOWER_MODEL_PATH = os.path.join(_BASE_DIR, "models", "two_tower_model_v3.pt")
 BASE_MODEL_EMBED     = "jhgan/ko-sroberta-multitask"
 SUPABASE_URL         = os.getenv("SUPABASE_URL", "your_supabase_url")
 SUPABASE_KEY         = os.getenv("SUPABASE_KEY", "your_supabase_key")
