@@ -30,7 +30,7 @@ install() {
     cp "$PLIST_SRC" "$PLIST_DST"
     launchctl load "$PLIST_DST"
 
-    echo "✓ 스케줄러 설치 완료 (1시간 간격 실행)"
+    echo "✓ 스케줄러 설치 완료 (평일 09:17-17:17, 1시간 간격 실행)"
     echo ""
     echo "  상태 확인:  launchctl list | grep sangsangfinder"
     echo "  로그 (실시간): tail -f $SCRIPT_DIR/auto_crawler.log"

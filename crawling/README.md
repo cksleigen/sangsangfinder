@@ -9,7 +9,7 @@ colab_crawl.py — 이미 만들어진 JSON 파일을 불러와서 각 공지의
 
 ## Supabase 자동 크롤링
 
-GitHub Actions가 평일 09:00-17:00(KST)에 1시간 간격으로 실행되고, 새 공지만 Supabase Postgres의 `notices` 테이블에 저장한다.
+GitHub Actions가 평일 09:17-17:17(KST)에 1시간 간격으로 실행되고, 새 공지만 Supabase Postgres의 `notices` 테이블에 저장한다.
 
 필요한 GitHub Secret:
 
