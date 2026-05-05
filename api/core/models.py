@@ -12,7 +12,7 @@ import time
 logger = logging.getLogger(__name__)
 
 from .config import (
-    EMBED_MODEL_PATH, BASE_MODEL_EMBED,
+    EMBED_MODEL_PATH, BASE_MODEL_EMBED, EMBEDDER_BACKEND, SIMCSE_POOLING,
     SUMMARY_MODEL_PATH, CLASSIFY_MODEL_PATH,
     CHROMA_DB_PATH, INDEX_MANIFEST_PATH, NOTICES_CACHE_PATH,
     CHUNK_SIZE, CHUNK_OVERLAP,
@@ -25,21 +25,34 @@ _classifier       = None
 _label_map: dict  = {}
 _chroma           = None
 
-EMBEDDING_PIPELINE_VERSION = "simcse-cls-v1"
+EMBEDDING_PIPELINE_VERSION = (
+    f"simcse-{SIMCSE_POOLING}-v1"
+    if EMBEDDER_BACKEND == "simcse"
+    else "sentence-transformers-default-v1"
+)
 
 
 class SimCSEEmbedder:
     """
-    SimCSE-aware embedder that extracts the CLS token from the last hidden state.
-    sentence-transformers defaults to mean pooling, which degrades SimCSE quality.
+    SimCSE-aware embedder with selectable pooling.
+
+    CLS pooling follows the common SimCSE inference path. Mean pooling is useful
+    as an ablation for longer retrieval chunks where token-level evidence matters.
     """
 
-    def __init__(self, model_path: str, device: str = "cpu") -> None:
+    def __init__(self, model_path: str, device: str = "cpu", pooling: str = SIMCSE_POOLING) -> None:
         from transformers import AutoTokenizer, AutoModel
-        self._tokenizer = AutoTokenizer.from_pretrained(model_path)
-        self._model = AutoModel.from_pretrained(model_path)
+
+        pooling = pooling.lower()
+        if pooling not in {"cls", "mean"}:
+            raise ValueError(f"Unsupported pooling: {pooling}. Use 'cls' or 'mean'.")
+
+        local_only = os.getenv("TRANSFORMERS_OFFLINE") == "1" or os.getenv("HF_HUB_OFFLINE") == "1"
+        self._tokenizer = AutoTokenizer.from_pretrained(model_path, local_files_only=local_only)
+        self._model = AutoModel.from_pretrained(model_path, local_files_only=local_only)
         self._model.eval()
         self._device = device
+        self._pooling = pooling
         self._model.to(device)
 
     def encode(
@@ -80,10 +93,14 @@ class SimCSEEmbedder:
             ).to(self._device)
             with torch.inference_mode():
                 output = self._model(**encoded)
-            # CLS token at position 0 of the last hidden state
-            cls_vec = output.last_hidden_state[:, 0, :]
-            cls_vec = F.normalize(cls_vec, p=2, dim=1)
-            all_embeddings.append(cls_vec.cpu().numpy())
+            hidden = output.last_hidden_state
+            if self._pooling == "cls":
+                pooled = hidden[:, 0, :]
+            else:
+                mask = encoded["attention_mask"].unsqueeze(-1).to(hidden.dtype)
+                pooled = (hidden * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1e-9)
+            pooled = F.normalize(pooled, p=2, dim=1)
+            all_embeddings.append(pooled.cpu().numpy())
             if show_progress_bar:
                 elapsed = time.monotonic() - started_at
                 logger.info(
@@ -119,10 +136,25 @@ def _best_device() -> str:
     return "cpu"
 
 
-def get_embed_model() -> SimCSEEmbedder:
+def get_embed_model():
     global _embed_model
     if _embed_model is None:
-        _embed_model = SimCSEEmbedder(_embed_model_source(), device=_best_device())
+        if EMBEDDER_BACKEND == "simcse":
+            _embed_model = SimCSEEmbedder(_embed_model_source(), device=_best_device())
+        elif EMBEDDER_BACKEND in {"sentence-transformers", "sentence_transformers", "st"}:
+            from sentence_transformers import SentenceTransformer
+
+            local_only = os.getenv("TRANSFORMERS_OFFLINE") == "1" or os.getenv("HF_HUB_OFFLINE") == "1"
+            _embed_model = SentenceTransformer(
+                _embed_model_source(),
+                device=_best_device(),
+                local_files_only=local_only,
+            )
+        else:
+            raise ValueError(
+                f"Unsupported EMBEDDER_BACKEND={EMBEDDER_BACKEND}. "
+                "Use 'simcse' or 'sentence-transformers'."
+            )
     return _embed_model
 
 
@@ -133,7 +165,9 @@ def _embed_model_source() -> str:
 def _index_config_signature() -> str:
     payload = {
         "embedding_model": _embed_model_source(),
+        "embedder_backend": EMBEDDER_BACKEND,
         "embedding_pipeline": EMBEDDING_PIPELINE_VERSION,
+        "simcse_pooling": SIMCSE_POOLING,
         "chunk_size": CHUNK_SIZE,
         "chunk_overlap": CHUNK_OVERLAP,
     }
@@ -265,7 +299,9 @@ def index_notices(
     index_config = {
         "signature": _index_config_signature(),
         "embedding_model": _embed_model_source(),
+        "embedder_backend": EMBEDDER_BACKEND,
         "embedding_pipeline": EMBEDDING_PIPELINE_VERSION,
+        "simcse_pooling": SIMCSE_POOLING,
         "chunk_size": CHUNK_SIZE,
         "chunk_overlap": CHUNK_OVERLAP,
     }
@@ -390,7 +426,7 @@ def index_notices(
             total_batches,
             len(batch),
             len(docs),
-            model._device,
+            getattr(model, "_device", getattr(model, "device", "unknown")),
             embed_batch_size,
         )
         embeddings = model.encode(

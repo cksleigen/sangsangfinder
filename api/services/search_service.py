@@ -4,7 +4,7 @@ Extracted from app.py: hybrid_search, _build_bm25_index, generate_llm_reply.
 """
 from __future__ import annotations
 
-from ..core.config import GEMINI_API_KEY
+from ..core.config import GEMINI_API_KEY, SEARCH_ALPHA
 from ..core.models import get_embed_model, get_chroma, get_index_fingerprint, load_notices_cache
 from ..core.utils import tokenize_ko
 
@@ -45,7 +45,7 @@ def invalidate_bm25_cache() -> None:
 def hybrid_search(
     query: str,
     top_k: int = 5,
-    alpha: float = 0.7,
+    alpha: float = SEARCH_ALPHA,
     category_filter: str | None = None,
 ) -> list[dict]:
     model      = get_embed_model()

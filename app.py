@@ -753,7 +753,7 @@ section[data-testid="stSidebar"] .reset-btn button {
 
 def render_chatbot(profile: dict):
     top_k = 5
-    alpha = 0.7
+    alpha = 0.5
 
     # 채팅 영역 — mac 버튼 바 + 컨테이너를 하나로
     with st.container(border=True):
