@@ -1,10 +1,10 @@
 """
 6개 검색 시스템 비교 평가 스크립트 (구 모델 vs 신 모델)
   System A: jhgan/ko-sroberta (OLD) + dense only
-  System B: jhgan/ko-sroberta (OLD) + BM25 hybrid  (α=0.7)
+  System B: jhgan/ko-sroberta (OLD) + BM25 hybrid  (α=0.5)
   System C: BM-K/KoSimCSE    (NEW) + dense only
-  System D: BM-K/KoSimCSE    (NEW) + BM25 hybrid   (α=0.7)
-  System E: 파인튜닝 임베딩   (NEW) + BM25 hybrid   (α=0.7)  <- 현재 시스템
+  System D: BM-K/KoSimCSE    (NEW) + BM25 hybrid   (α=0.5)
+  System E: 파인튜닝 임베딩   (NEW) + BM25 hybrid   (α=0.5)  <- 현재 시스템
   System F: System E + cross-encoder reranker
 
 Metrics (TEST split): Recall@5, MRR, NDCG@5
@@ -45,7 +45,7 @@ CROSS_ENCODER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
 K            = 5    # Recall@K, NDCG@K
 RERANK_TOPN  = 20   # reranker 후보 수
-ALPHA        = 0.7  # hybrid: dense 가중치
+ALPHA        = 0.5  # hybrid: dense 가중치
 
 
 def load_embedder(model_path: str):
