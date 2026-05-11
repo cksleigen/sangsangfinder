@@ -35,7 +35,7 @@ EMBED_MODEL_PATH    = os.path.join(_BASE_DIR, "models", "embed_finetuned")
 SUMMARY_MODEL_PATH  = os.path.join(_BASE_DIR, "models", "summary_finetuned")
 CLASSIFY_MODEL_PATH = os.path.join(_BASE_DIR, "models", "classify_finetuned")
 BASE_MODEL_EMBED    = "jhgan/ko-sroberta-multitask"
-CHROMA_DB_PATH      = os.getenv("CHROMA_DB_PATH", os.path.join(_BASE_DIR, "chroma_db_jhgan_2026"))
+CHROMA_DB_PATH      = os.getenv("CHROMA_DB_PATH", os.path.join(_BASE_DIR, "chroma_db"))
 SEARCH_ALPHA        = float(os.getenv("SEARCH_ALPHA", "0.5"))
 PROFILE_CACHE_PATH  = os.path.join(_BASE_DIR, "data", "profile_cache.json")
 GEMINI_API_KEY      = os.getenv("GEMINI_API_KEY")
@@ -221,7 +221,12 @@ def hybrid_search(query, top_k=5, alpha=SEARCH_ALPHA, category_filter=None):
     final   = {did: alpha*vector_scores.get(did,0)+(1-alpha)*bm25_scores.get(did,0) for did in all_ids}
     top_ids = sorted(final, key=lambda x: final[x], reverse=True)[:top_k]
     meta_map = dict(zip(ids, metadatas))
-    return [{**meta_map[did], "score": round(final[did],4)} for did in top_ids if did in meta_map]
+    doc_map = dict(zip(ids, documents))
+    return [
+        {**meta_map[did], "score": round(final[did],4), "content": doc_map.get(did, "")}
+        for did in top_ids
+        if did in meta_map
+    ]
 
 def summarize_notice(title, body):
     import html as _html
@@ -248,7 +253,10 @@ def generate_llm_reply(user_query, results, profile, is_first=False):
     if not results: return "관련 공지를 찾지 못했습니다. 다른 키워드로 검색해보세요."
     notices_data = load_notices_from_supabase()
     body_map     = {n["url"]: n.get("body","") for n in notices_data}
-    context = "\n\n".join([f"[공지 {i+1}]\n제목: {r['title']}\n날짜: {r['date']}\n내용: {body_map.get(r['url'],'')[:800]}" for i, r in enumerate(results[:3])])
+    context = "\n\n".join([
+        f"[공지 {i+1}]\n제목: {r['title']}\n날짜: {r['date']}\n내용: {(r.get('content') or body_map.get(r['url'],''))[:800]}"
+        for i, r in enumerate(results[:3])
+    ])
     greeting = f"{profile.get('name','')}님, 안녕하세요. " if is_first else ""
     prompt = f"""당신은 한성대학교 공지사항 안내 도우미입니다.
 아래 공지사항 본문을 바탕으로 사용자 질문에 직접적이고 구체적으로 답변하세요.

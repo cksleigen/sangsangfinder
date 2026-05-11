@@ -87,6 +87,7 @@ def hybrid_search(
     }
 
     meta_map  = dict(zip(ids, metadatas))
+    doc_map   = dict(zip(ids, documents))
     seen_urls: dict[str, dict] = {}
     for did in sorted(final, key=lambda x: final[x], reverse=True):
         meta = meta_map.get(did)
@@ -94,7 +95,11 @@ def hybrid_search(
             continue
         url = meta["url"]
         if url not in seen_urls:
-            seen_urls[url] = {**meta, "score": round(final[did], 4)}
+            seen_urls[url] = {
+                **meta,
+                "score": round(final[did], 4),
+                "content": doc_map.get(did, ""),
+            }
         if len(seen_urls) >= top_k:
             break
 
@@ -126,7 +131,7 @@ def generate_llm_reply(
     body_map    = {n["url"]: n.get("body", "") for n in notices}
     context_parts = []
     for i, r in enumerate(results[:3], 1):
-        body = body_map.get(r["url"], "")[:800]
+        body = (r.get("content") or body_map.get(r["url"], ""))[:800]
         context_parts.append(
             f"[공지 {i}]\n제목: {r['title']}\n날짜: {r['date']}\n내용: {body if body else '(본문 없음)'}"
         )
